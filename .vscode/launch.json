@@ -1,0 +1,33 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "🧠 Brain TUI (Full Control)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "brain_tui.py",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "🚀 Launch Bridge (MCP Server)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "brain_server.py",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "⚙️ Run Indexer (Update Archive)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "index_archive.py",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "🧪 Test Memory Access",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "test_brain.py",
+      "console": "integratedTerminal"
+    }
+  ]
+}

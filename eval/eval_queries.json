@@ -1,0 +1,122 @@
+[
+  {
+    "id": "recall_01",
+    "query": "What are the 5 steps of the Agent Development Lifecycle?",
+    "expected_paths": ["2. Areas/Agent_Development_Lifecycle.md"],
+    "type": "recall"
+  },
+  {
+    "id": "recall_02",
+    "query": "What is the Planning Pattern and why should an AI plan before acting?",
+    "expected_paths": ["3. Resources/Structures/Planning_Pattern.md"],
+    "type": "recall"
+  },
+  {
+    "id": "recall_03",
+    "query": "How does the Orchestrator Pattern work with sub-agents?",
+    "expected_paths": ["3. Resources/Structures/Orchestrator_Pattern.md"],
+    "type": "recall"
+  },
+  {
+    "id": "recall_04",
+    "query": "What is the ReAct reasoning and acting pattern for AI agents?",
+    "expected_paths": ["3. Resources/Structures/Agentic_Workflows.md"],
+    "type": "recall"
+  },
+  {
+    "id": "recall_05",
+    "query": "How does the MCP protocol standardize tool use across agents?",
+    "expected_paths": ["2. Areas/Agent_Development_Lifecycle.md"],
+    "type": "recall"
+  },
+  {
+    "id": "recall_06",
+    "query": "What are the main quests on the path to building God AI?",
+    "expected_paths": ["1. Projects/Main_Quest_Log.md"],
+    "type": "recall"
+  },
+  {
+    "id": "recall_07",
+    "query": "How do Fractal Agent Pods scale a multi-agent system?",
+    "expected_paths": ["3. Resources/Structures/Fractal_Agent_Pods.md"],
+    "type": "recall"
+  },
+  {
+    "id": "recall_08",
+    "query": "What is the Immortal Memory Architecture for persistent AI memory?",
+    "expected_paths": ["3. Resources/Structures/Immortal_Memory_Architecture.md"],
+    "type": "recall"
+  },
+  {
+    "id": "recall_09",
+    "query": "What is the Specialist Registry and how does it manage agent roles?",
+    "expected_paths": ["3. Resources/Structures/Specialist_Registry.md"],
+    "type": "recall"
+  },
+  {
+    "id": "recall_10",
+    "query": "What are agentic workflows and how does reflection work?",
+    "expected_paths": ["3. Resources/Structures/Agentic_Workflows.md"],
+    "type": "recall"
+  },
+  {
+    "id": "recall_11",
+    "query": "How does HITL human-in-the-loop work for high-risk agent actions?",
+    "expected_paths": ["2. Areas/Agent_Development_Lifecycle.md"],
+    "type": "recall"
+  },
+  {
+    "id": "recall_12",
+    "query": "What is the God AI project and what is the current active quest?",
+    "expected_paths": ["1. Projects/Main_Quest_Log.md"],
+    "type": "recall"
+  },
+  {
+    "id": "recall_13",
+    "query": "What tool uses tree-sitter AST analysis and the Leiden algorithm to generate a knowledge graph from a codebase?",
+    "expected_paths": ["4. Archives/obscure tool/graphify.md"],
+    "type": "recall"
+  },
+  {
+    "id": "recall_14",
+    "query": "What is the Principle of Least Privilege for agent tooling?",
+    "expected_paths": ["2. Areas/Agent_Development_Lifecycle.md"],
+    "type": "recall"
+  },
+  {
+    "id": "recall_15",
+    "query": "What is the PARA framework and how is an Obsidian second brain structured?",
+    "expected_paths": ["3. Resources/The Obsidian Second Brain, A Strategic Framework for Knowledge Growth.md"],
+    "type": "recall"
+  },
+  {
+    "id": "recall_16",
+    "query": "What visual orchestration frameworks like Dify or AutoGen can build multi-agent systems?",
+    "expected_paths": ["2. Areas/Tooling_&_Frameworks.md"],
+    "type": "recall"
+  },
+  {
+    "id": "recall_17",
+    "query": "What neural network basics are documented in the archives?",
+    "expected_paths": ["4. Archives/Neural_Network_Basics.md"],
+    "type": "recall"
+  },
+  {
+    "id": "negative_01",
+    "query": "How do I bake sourdough bread at home?",
+    "expected_paths": [],
+    "type": "negative"
+  },
+  {
+    "id": "negative_02",
+    "query": "What is the quarterly revenue forecast for Q3 2025?",
+    "expected_paths": [],
+    "type": "negative"
+  },
+  {
+    "id": "negative_03",
+    "query": "How do I fix a leaking kitchen faucet?",
+    "expected_paths": [],
+    "type": "negative"
+  }
+]

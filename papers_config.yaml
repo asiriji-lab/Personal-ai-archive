@@ -1,0 +1,37 @@
+# ZeroCostBrain — Paper Ingestion Config
+# Run: python fetch_papers.py
+# Scheduled: daily via Windows Task Scheduler
+
+settings:
+  days_back: 7          # fetch papers published in last N days
+  max_per_query: 20     # max results per search query
+  output_dir: "knowledge_base/4. Archives/AI Papers"
+  manifest: "data/papers_manifest.json"
+  rate_limit_seconds: 3 # arXiv asks for 3s between requests
+
+# ── Keyword searches ─────────────────────────────────────────────
+# Each entry hits the arXiv search API. Be specific to avoid noise.
+keywords:
+  # Labs — their name usually appears in affiliation or title
+  - "DeepSeek"
+  - "Anthropic claude"
+  - "Qwen alibaba"
+  - "OpenAI GPT"
+  - "Google DeepMind gemini"
+  - "Meta llama"
+  - "Mistral"
+  - "xAI grok"
+  # Topics you care about
+  - "mixture of experts language model"
+  - "chain of thought reasoning LLM"
+  - "retrieval augmented generation"
+  - "multimodal large language model"
+  - "agent tool use LLM"
+  - "knowledge graph LLM"
+
+# ── arXiv categories to restrict to ─────────────────────────────
+# Leave empty [] to search all categories.
+categories:
+  - cs.AI
+  - cs.LG
+  - cs.CL

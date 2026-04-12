@@ -1,0 +1,36 @@
+# ──────────────────────────────────────────────
+# ZeroCostBrain — Dependencies
+# ──────────────────────────────────────────────
+
+# Core AI Engine
+lightrag-hku>=1.4.13
+ollama
+
+# MVP Tier 2: SQLite-vec + BM25 + RRF
+sqlite-vec          # bundles the vec0 extension, no manual compile needed
+rank_bm25
+numpy
+
+# MCP Server
+fastmcp>=3.2.2
+
+# Embeddings & Graph
+nano-vectordb
+networkx
+
+# UI & Display
+rich
+tqdm
+matplotlib
+
+# News Ingest
+requests
+
+# File Watching
+watchdog
+
+# Configuration
+python-dotenv
+
+# Testing (dev)
+pytest
