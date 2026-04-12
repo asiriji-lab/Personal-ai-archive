@@ -129,4 +129,13 @@ python brain_explorer.py
 
 ---
 
+## 📖 Documentation & Extension
+
+For more in-depth information, refer to the following guides:
+
+- **[Installation & Setup](docs/setup_brain.md):** Detailed step-by-step guide to get up and running.
+- **[Development & Customization](docs/customization.md):** How to modify the brain, add new MCP tools, and optimize performance.
+
+---
+
 > **Note:** If you have 8GB+ VRAM, you can scale up the reasoning model by switching to `qwen2.5:7b` and increasing `BRAIN_CONTEXT_WINDOW` in your `.env` file.
