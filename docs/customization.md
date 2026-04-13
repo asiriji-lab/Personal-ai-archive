@@ -7,10 +7,11 @@ This guide is for users and developers who want to modify, extend, or deeply und
 ## 📖 Table of Contents
 1. [User Customization](#user-customization)
 2. [Developer Onboarding](#developer-onboarding)
-3. [Core Logic & Flow](#core-logic--flow)
-4. [Customizing the Knowledge Graph](#customizing-the-knowledge-graph)
-5. [Extending the MCP Bridge](#extending-the-mcp-bridge)
-6. [Troubleshooting & Performance](#troubleshooting--performance)
+3. [Indexing & Fault Tolerance](#indexing--fault-tolerance)
+4. [Data Ingestion (Papers & News)](#data-ingestion-papers--news)
+5. [Automated Indexing (Watcher)](#automated-indexing-watcher)
+6. [Extending the MCP Bridge](#extending-the-mcp-bridge)
+7. [Troubleshooting & Performance](#troubleshooting--performance)
 
 ---
 
@@ -24,13 +25,6 @@ If you have more VRAM (8GB+), you can switch to a larger model for better reason
 2. Change `BRAIN_LOCAL_MODEL=qwen2.5:7b`.
 3. Increase `BRAIN_CONTEXT_WINDOW=32768` (or higher if VRAM allows).
 4. Restart the indexer or server.
-
-### Custom Vault Structure
-By default, the brain looks for `3. Resources` and `4. Archives`. To change these, modify `config.py`:
-```python
-ARCHIVE_PATH = VAULT_PATH / "Your_Custom_Archive_Folder"
-RESOURCES_PATH = VAULT_PATH / "Your_Custom_Active_Folder"
-```
 
 ---
 
@@ -46,35 +40,46 @@ RESOURCES_PATH = VAULT_PATH / "Your_Custom_Active_Folder"
 2. **Debug Mode:** Use the provided VS Code launch configurations (`.vscode/launch.json`) to step through the code.
 
 ### Tech Stack
-- **Engine:** [LightRAG](https://github.com/HKUDS/LightRAG) (Dual-layer Graph RAG).
-- **Server:** [FastMCP](https://github.com/jlowin/fastmcp) (Model Context Protocol).
-- **UI:** [Textual](https://github.com/Textualize/textual) (TUI) and [Vis.js](https://visjs.org/) (Graph Visualizer).
-- **Database:** `sqlite-vec` for fast local vector search in `3. Resources`.
+- **Engine:** [LightRAG](https://github.com/HKUDS/LightRAG) (Archive Graph).
+- **Hybrid Search:** `sqlite-vec` + FTS5 (Active Vault).
+- **Server:** [FastMCP](https://github.com/jlowin/fastmcp).
+- **UI:** [Textual](https://github.com/Textualize/textual).
 
 ---
 
-## ⚙️ Core Logic & Flow
+## ⚙️ Indexing & Fault Tolerance
 
-### 1. Indexing (`index_archive.py`)
-The indexer performs the following steps:
-- **Scan:** Traverses `4. Archives` for `.md` files.
-- **Hash Check:** Compares file hashes against `index_manifest.json` to skip unchanged files.
-- **Chunking:** Large files are split into `BRAIN_CHUNK_SIZE` characters to stay within context limits.
-- **Entity Extraction:** LightRAG uses the local LLM to extract entities and relationships.
-- **Graph Updates:** Updates the local Knowledge Graph in `.lightrag/`.
+The indexer (`index_archive.py`) is designed for long-running processes and resilience.
 
-### 2. Retrieval (`query.py` & `brain_server.py`)
-- **Semantic Search:** Uses vector embeddings to find relevant chunks.
-- **Graph Search:** Traverses the Knowledge Graph to find related concepts that might not share keywords.
-- **MCP Tools:** Exposes these retrieval methods as standard tools for AI agents.
+### Incremental Logic
+- **Hashing:** Fast MD5 hashes are stored in `.lightrag/index_manifest.json`. Files are only re-indexed if their hash changes.
+- **Failures:** Files that cause LLM timeouts or crashes are logged to `.lightrag/index_failures.json`.
+- **Retries:** Use `python index_archive.py --retry-failed` to specifically target files that previously errored.
+- **Max Retries:** Controlled by `BRAIN_INDEX_MAX_RETRIES` with exponential backoff (`5s`, `15s`, `30s`).
 
 ---
 
-## 🧩 Customizing the Knowledge Graph
+## 📥 Data Ingestion (Papers & News)
 
-You can modify how the AI perceives your data by editing the prompts used for extraction.
-- **Extraction Prompts:** Located within the LightRAG initialization in `index_archive.py`.
-- **Entity Types:** You can define specific entity types (e.g., "Project", "Concept", "Person") to guide the graph construction.
+### AI Papers (`fetch_papers.py`)
+- **Sources:** arXiv RSS + Hugging Face Daily Papers.
+- **Keyword Filter:** Controlled via `papers_config.yaml`. Only arXiv papers matching these keywords are saved; all HF Daily papers pass through.
+- **Dedup:** Uses `data/papers_manifest.json` to prevent duplicate ingestion of the same arXiv ID.
+
+### News Ingest (`news_ingest.py`)
+- **Sources:** Google News (AI, Tech, Finance), Lab Blogs (DeepMind, Meta, Qwen, Apple, Google Research).
+- **Logic:** Extracts summaries and creates clean Markdown files in `4. Archives/News_Ingest/`.
+
+---
+
+## 👁️ Automated Indexing (Watcher)
+
+The `watch_archive.py` script monitors your archive folder for changes.
+
+### Debounce Mechanism
+To prevent VRAM thrashing during bulk file operations (e.g., moving a folder), the watcher uses a **Debounce Window** (default: 60s).
+- It waits until 60 seconds have passed since the *last* file change before triggering the indexer.
+- You can adjust this via `python watch_archive.py --debounce 30`.
 
 ---
 
@@ -101,12 +106,6 @@ The system is tuned for 6GB VRAM. If you encounter `llama runner process has ter
 - Ensure `OLLAMA_MAX_LOADED_MODELS=1` is set.
 - Lower `BRAIN_CONTEXT_WINDOW` in `.env`.
 - Check `utils.py -> get_gpu_stats()` to monitor real-time usage in the TUI.
-
-### Encoding Issues (Windows)
-If you see broken characters in the terminal, ensure your environment is set to UTF-8:
-```powershell
-$env:PYTHONIOENCODING="utf-8"
-```
 
 ---
 

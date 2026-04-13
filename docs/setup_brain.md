@@ -2,20 +2,30 @@
 
 This is the control hub for your **Zero-Cost Virtual Brain**, connecting your active Obsidian Vault with deep archival knowledge using local AI.
 
-## 1. Prerequisites
+---
+
+## 📋 1. Prerequisites
 
 - **Python 3.10+**
-- **Ollama** installed and running (`ollama serve`)
-- **NVIDIA GPU** with drivers (for `nvidia-smi` monitoring)
+- **Ollama** installed and running (`ollama serve`).
+- **NVIDIA GPU** with 6GB+ VRAM (e.g., RTX 4050).
+- **SQLite with Vector Support:** The system uses `sqlite-vec` for fast local retrieval.
 
-## 2. The Architecture
-*   **Engine (Code):** This folder (`ZeroCostBrain/`)
-*   **Vault (Data):** Your Obsidian knowledge base (configured via `.env`)
-*   **Brain Storage:** `.lightrag/` folder inside your vault
-*   **LLM Model:** `qwen3.5:4b-brain` (Local via Ollama — custom variant with num_ctx=4096 baked in, see dev_log.md Bug 7)
-*   **Embeddings:** `nomic-embed-text` (Local via Ollama)
+## 🏗️ 2. The Architecture
 
-## 3. First-Time Setup
+The system operates in two distinct tiers to optimize for performance and VRAM:
+
+| Tier | Folder | Search Engine | Best For |
+|------|--------|---------------|----------|
+| **Active Vault** | `3. Resources` | **Hybrid Search** (Vector + BM25) | Fast recall, keyword matches, active notes. |
+| **Long-Term Archive** | `4. Archives` | **Knowledge Graph** (LightRAG) | Thematic queries, entity relationships, old projects. |
+
+- **Engine (Code):** This folder (`ZeroCostBrain/`)
+- **Vault (Data):** Your Obsidian knowledge base (configured via `.env`)
+- **Brain Storage:** `.lightrag/` (Graph) and `data/index.db` (Vector)
+- **Ollama Models:** `qwen3.5:4b` (LLM) and `nomic-embed-text` (Embeddings)
+
+## 🛠️ 3. First-Time Setup
 
 ```bash
 # 1. Install Python dependencies
@@ -36,7 +46,7 @@ python -c "from config import validate_paths; validate_paths(); print('✅ Confi
 python index_archive.py
 ```
 
-## 4. VS Code Integration
+## 🔌 4. VS Code Integration
 
 This folder is a complete VS Code workspace:
 1.  Open **VS Code**.
@@ -48,62 +58,49 @@ This folder is a complete VS Code workspace:
     *   **⚙️ Run Indexer (Update Archive):** To scan new `.md` files.
     *   **🧪 Test Memory Access:** Interactive query testing.
 
-## 5. The Core Scripts
+## ⚙️ 5. The Core Scripts
 
 | Command | Description |
 |---------|-------------|
-| `python brain_tui.py` | Main cockpit — dashboard, vitals, launcher |
-| `python index_archive.py` | Index new/changed archive files |
-| `python index_archive.py --reset` | Full re-index from scratch |
-| `python brain_server.py` | Start MCP Bridge for AI agents |
-| `python brain_explorer.py` | View knowledge graph concepts & relations |
-| `python brain_explorer.py --top 30` | Show more concepts |
-| `python test_brain.py` | Interactive query REPL |
-| `python test_brain.py "your question"` | Single query via CLI |
+| `python brain_tui.py` | Main cockpit — dashboard, vitals, launcher. |
+| `python index_archive.py` | Index new/changed archive files (Incremental). |
+| `python index_archive.py --reset` | Full re-index from scratch. |
+| `python index_archive.py --retry-failed` | Retry only files that failed previous indexing. |
+| `python brain_server.py` | Start MCP Bridge for AI agents. |
+| `python watch_archive.py` | Background service to auto-index new files (60s debounce). |
+| `python brain_explorer.py` | View knowledge graph concepts & relations. |
+| `python query.py "question"` | Fast hybrid search over the **Active Vault**. |
+| `python test_brain.py` | Interactive query REPL for the **Archive Brain**. |
 
-## 6. Environment Variables
+## 🌍 6. Environment Variables
 
 All configuration is in `config.py` with `.env` overrides:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `BRAIN_VAULT_PATH` | *(hardcoded fallback)* | Path to your Obsidian vault |
-| `BRAIN_LLM_PROVIDER` | `LOCAL` | `LOCAL` (Ollama) or `GEMINI` (Cloud) |
-| `OLLAMA_HOST` | `http://localhost:11434` | Ollama server address |
-| `BRAIN_LOCAL_MODEL` | `qwen3.5:4b` | Local LLM model name |
-| `BRAIN_EMBED_MODEL` | `nomic-embed-text` | Embedding model name |
-| `BRAIN_CONTEXT_WINDOW` | `4096` | Context window size (4096 is optimal for RTX 4050 — see dev_log.md) |
-| `GOOGLE_API_KEY` | *(empty)* | Gemini API key (if using cloud) |
-| `BRAIN_INDEX_MAX_RETRIES` | `3` | Max retry attempts per file during indexing |
-| `BRAIN_CHUNK_SIZE` | `1500` | Max chars per document chunk (math-derived — see dev_log.md Bug 5) |
+| `BRAIN_VAULT_PATH` | *(hardcoded fallback)* | Path to your Obsidian vault. |
+| `BRAIN_LLM_PROVIDER` | `LOCAL` | `LOCAL` (Ollama) or `GEMINI` (Cloud). |
+| `OLLAMA_HOST` | `http://localhost:11434` | Ollama server address. |
+| `BRAIN_LOCAL_MODEL` | `qwen3.5:4b` | Local LLM model name. |
+| `BRAIN_EMBED_MODEL` | `nomic-embed-text` | Embedding model name. |
+| `BRAIN_CONTEXT_WINDOW` | `4096` | Context window size (4096 is optimal for RTX 4050). |
+| `GOOGLE_API_KEY` | *(empty)* | Gemini API key (if using cloud). |
+| `BRAIN_INDEX_MAX_RETRIES` | `3` | Max retry attempts per file during indexing. |
+| `BRAIN_CHUNK_SIZE` | `1500` | Max chars per document chunk. |
 
-## 7. Before Running the Indexer (Windows)
+## 🏁 7. Performance Optimization (Windows)
 
-Always set this before starting Ollama and running `index_archive.py`:
-
-```powershell
-$env:OLLAMA_FLASH_ATTENTION="1"
-$env:OLLAMA_KV_CACHE_TYPE="q8_0"
-$env:OLLAMA_MAX_LOADED_MODELS="1"
-$env:PYTHONIOENCODING="utf-8"
-```
-
-Flash attention reduces VRAM usage and speeds up inference. The encoding fix prevents crashes on emoji/arrow characters in Windows terminal.
-
-Full indexer reset sequence:
+Always set these before starting Ollama and running `index_archive.py` for best results on 6GB VRAM:
 
 ```powershell
 $env:OLLAMA_FLASH_ATTENTION="1"
 $env:OLLAMA_KV_CACHE_TYPE="q8_0"
 $env:OLLAMA_MAX_LOADED_MODELS="1"
 $env:PYTHONIOENCODING="utf-8"
-Remove-Item "C:\Users\acer.nitrov15\ZeroCostBrain\knowledge_base\.lightrag" -Recurse -Force
-python index_archive.py --reset
 ```
 
-## 8. Dependencies
+Flash attention reduces VRAM usage and speeds up inference. The encoding fix prevents crashes on emoji/arrow characters in the Windows terminal.
 
-If you ever move this to a new machine:
-```bash
-pip install -r requirements.txt
-```
+---
+
+*For developers, see [docs/customization.md](customization.md) for extension and internals.*
