@@ -1,7 +1,7 @@
 # ZeroCostBrain — Developer Log
 
 > For the next AI, the next human, or whoever is crazy enough to read this.
-> Written after Sprint 1. Last updated: 2026-04-11.
+> Written after Sprint 1. Last updated: 2026-04-16.
 
 ---
 
@@ -292,6 +292,150 @@ ERROR: LLM func: Critical error in worker: Event loop is closed
 RuntimeError: no running event loop
 ```
 This is a cleanup artifact from LightRAG's async worker pool shutting down mid-task. It is cosmetic — it does not indicate data corruption. The real error is the timeout that preceded it.
+
+---
+
+---
+
+## Code Review Audit — 2026-04-16
+
+Full audit of the codebase identified 9 real bugs (2 critical, 1 security, 4 correctness, 2 maintenance). All fixed in one session. Log below for future reference.
+
+---
+
+### Fix 1 — `brain_server.py`: Event Loop Crash on Startup (Critical)
+
+**Symptom**: `brain_server.py` calls `asyncio.run(_initialize())` at module load time to initialize LightRAG. When FastMCP then starts its own event loop, any Ollama client or asyncio resource bound to the first loop is dead. Result: connection errors or `RuntimeError: Event loop is closed` on first query.
+
+**Root cause**: `asyncio.run()` creates and tears down its own loop. Resources initialized inside it cannot be used in a different loop.
+
+**Fix**: Deleted `_initialize()` and `asyncio.run(_initialize())`. Moved RAG initialization into FastMCP's `lifespan` hook, which runs inside the server's own loop:
+```python
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def lifespan(server):
+    validate_paths()
+    rag = get_rag()
+    await rag.initialize_storages()
+    logger.info("✅ Brain Bridge is ONLINE.")
+    yield
+
+mcp = FastMCP("BrainBridge", lifespan=lifespan)
+```
+
+---
+
+### Fix 2 — `watch_archive.py`: Wrong Lock Type for Watchdog Callbacks (Critical)
+
+**Symptom**: Debounce logic uses `asyncio.Lock()` to protect `_pending` and `_last_trigger`, but watchdog fires callbacks on background OS threads. `asyncio.Lock` is not thread-safe — it can only be acquired from within an event loop coroutine.
+
+**Root cause**: `asyncio.Lock` vs `threading.Lock` confusion. Watchdog events are OS threads, not coroutines.
+
+**Fix**: Replaced `asyncio.Lock()` with `threading.Lock()`. Extracted the `fire` boolean outside the lock before calling `_run_index()` (which runs long and must not hold the lock):
+```python
+self._lock = threading.Lock()
+
+# In _debounce_loop:
+fire = False
+with handler._lock:
+    if handler._pending and elapsed >= handler.debounce_seconds:
+        handler._pending = False
+        fire = True
+if fire:
+    handler._run_index()
+```
+
+---
+
+### Fix 3 — `query.py`: SQLite Connection Leak
+
+**Symptom**: On any exception inside `search()`, the SQLite connection is never closed. Under load or error conditions this leaks file handles.
+
+**Fix**: Wrapped with `try/finally`:
+```python
+conn = open_db()
+try:
+    ...
+    return results
+finally:
+    conn.close()
+```
+
+---
+
+### Fix 4 — `index_archive.py`: `--reset` Does Not Actually Reset
+
+**Symptom**: Running `python index_archive.py --reset` clears the manifest JSON but leaves all LightRAG state files intact (`kv_store_*.json`, `*.graphml`, vector stores). LightRAG then loads stale graph data and re-indexes on top of it, creating duplicates.
+
+**Root cause**: WORKING_DIR was never wiped on reset.
+
+**Fix**: Added `shutil.rmtree` pass over WORKING_DIR on `force_reset`, and nulled `_rag_instance` to force a fresh constructor:
+```python
+if force_reset and WORKING_DIR.exists():
+    for item in WORKING_DIR.iterdir():
+        item.unlink() if item.is_file() else shutil.rmtree(item)
+    _rag_instance = None
+```
+
+Also moved `ConnectionError` catch to wrap `initialize_storages()` (where the actual Ollama connection happens), not the pure-Python `LightRAG()` constructor.
+
+---
+
+### Fix 5 — `utils.py`: `shell=True` Subprocess Injection Risk (Security)
+
+**Symptom**: `nvidia-smi` was called via `subprocess.check_output(cmd_string, shell=True)`. If any part of the command string were ever parameterized, this would be a shell injection vector.
+
+**Fix**: Switched to list form with `shell=False`:
+```python
+cmd = ["nvidia-smi", "--query-gpu=memory.used,memory.total,utilization.gpu", "--format=csv,noheader,nounits"]
+output = subprocess.check_output(cmd, shell=False, timeout=5).decode().strip()
+```
+
+---
+
+### Fix 6 — `brain_tui.py`: Wrong Script Name in Menu
+
+**Symptom**: Menu option 5 referenced `news_harvester.py`, which does not exist. TUI showed the script as "(missing)" permanently.
+
+**Fix**: Corrected to the actual filename:
+```python
+"5": ("News Harvester", "news_ingest.py"),
+```
+
+---
+
+### Fix 7 — `embed.py`: N+1 DELETEs and Wrong Chunk Count
+
+**Symptom 1**: `_purge_chunks()` issued one `DELETE FROM vec_chunks WHERE rowid = ?` per chunk row. On a file with 50 chunks, that's 50 round-trips to SQLite.
+
+**Fix**: Single batch delete with `IN (...)` placeholder:
+```python
+placeholders = ",".join("?" * len(row_ids))
+conn.execute(f"DELETE FROM vec_chunks WHERE rowid IN ({placeholders})", row_ids)
+```
+
+**Symptom 2**: `total_chunks` was incremented by `len(chunks)` (total chunks attempted) instead of `stored_count` (chunks that actually succeeded). The final log line overstated the index size when embedding errors occurred.
+
+**Fix**: Track `stored_count` separately and use that:
+```python
+total_chunks += stored_count  # was: += len(chunks)
+```
+
+---
+
+### Fix 8 — `news_ingest.py`: O(n) File Scan for Deduplication
+
+**Symptom**: On every run, `_already_ingested()` called `INGEST_PATH.rglob("*.md")` and read every existing file to extract the source URL from its frontmatter. With thousands of articles, this scales O(n) and reads the full content of every file just to deduplicate.
+
+**Fix**: Replaced with a JSON manifest (same pattern as `embed.py` and `fetch_papers.py`). URLs are stored in `data/news_ingest_manifest.json`. Dedup is an O(1) set lookup.
+
+---
+
+### Fix 9 — `requirements.txt`: Stale and Missing Dependencies
+
+- Removed `matplotlib` — imported nowhere in the codebase.
+- Added `pyyaml`, `pyvis`, `psutil` — all actively imported but missing from the requirements file.
 
 ---
 

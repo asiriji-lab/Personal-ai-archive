@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "BrainBridge": {
+      "command": ".\\.venv\\Scripts\\python.exe",
+      "args": [
+        "brain_server.py"
+      ],
+      "trust": true
+    }
+  }
+}

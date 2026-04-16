@@ -14,6 +14,7 @@ import hashlib
 import json
 import glob
 import logging
+import shutil
 import sys
 import time
 from pathlib import Path
@@ -187,10 +188,6 @@ def get_rag() -> LightRAG:
                 func=_local_embed,
             ),
         )
-    except ConnectionError as e:
-        logger.error(f"❌ Cannot connect to Ollama at {OLLAMA_HOST}: {e}")
-        logger.error("Make sure Ollama is running: `ollama serve`")
-        sys.exit(1)
     except Exception as e:
         logger.error(f"❌ RAG INIT FAILED: {e}")
         sys.exit(1)
@@ -249,20 +246,34 @@ async def index_archive(force_reset: bool = False, retry_failed: bool = False):
     Index markdown files from the Archives folder into LightRAG.
 
     Args:
-        force_reset: If True, ignores the manifest and re-indexes everything.
+        force_reset: If True, wipes WORKING_DIR and re-indexes everything from scratch.
         retry_failed: If True, only retry previously failed files.
     """
+    global _rag_instance
     from tqdm import tqdm
 
+    if force_reset:
+        logger.info("🔄 FORCE RESET: Wiping WORKING_DIR and re-indexing all files from scratch.")
+        if WORKING_DIR.exists():
+            for item in WORKING_DIR.iterdir():
+                if item.is_file():
+                    item.unlink()
+                elif item.is_dir():
+                    shutil.rmtree(item)
+            logger.info(f"  Cleared: {WORKING_DIR}")
+        # Force get_rag() to build a fresh instance against the empty directory
+        _rag_instance = None
+
     rag = get_rag()
-    await rag.initialize_storages()
+    try:
+        await rag.initialize_storages()
+    except ConnectionError as e:
+        logger.error(f"❌ Cannot connect to Ollama at {OLLAMA_HOST}: {e}")
+        logger.error("Make sure Ollama is running: `ollama serve`")
+        sys.exit(1)
 
     manifest = {} if force_reset else _load_manifest()
-    failures = _load_failures()
-
-    if force_reset:
-        logger.info("🔄 FORCE RESET: Re-indexing all files from scratch.")
-        failures = {}
+    failures = {} if force_reset else _load_failures()
 
     if retry_failed:
         # Only process files that previously failed

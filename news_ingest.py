@@ -13,6 +13,7 @@ Usage:
 
 import argparse
 import hashlib
+import json
 import re
 import sys
 import xml.etree.ElementTree as ET
@@ -22,6 +23,9 @@ from pathlib import Path
 import requests
 
 from config import ARCHIVE_PATH
+
+PROJECT_ROOT = Path(__file__).parent
+MANIFEST_PATH = PROJECT_ROOT / "data" / "news_ingest_manifest.json"
 
 # ──────────────────────────────────────────────
 # OUTPUT
@@ -74,15 +78,22 @@ def _fetch_feed(url: str, timeout: int = 10) -> ET.Element | None:
         return None
 
 
-def _already_ingested(path: Path) -> set[str]:
-    """Return set of source URLs already written."""
-    seen = set()
-    for f in path.glob("*.md"):
-        text = f.read_text(encoding="utf-8", errors="ignore")
-        for line in text.splitlines():
-            if line.startswith("**Source:**"):
-                seen.add(line.replace("**Source:**", "").strip())
-    return seen
+def _load_manifest() -> set[str]:
+    """Return set of source URLs already ingested (from manifest file)."""
+    if MANIFEST_PATH.exists():
+        try:
+            return set(json.loads(MANIFEST_PATH.read_text(encoding="utf-8")))
+        except (json.JSONDecodeError, OSError):
+            print("  WARNING: Corrupt news manifest — starting fresh.")
+    return set()
+
+
+def _save_manifest(seen_urls: set[str]) -> None:
+    MANIFEST_PATH.parent.mkdir(parents=True, exist_ok=True)
+    MANIFEST_PATH.write_text(
+        json.dumps(sorted(seen_urls), indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
 
 
 # ──────────────────────────────────────────────
@@ -116,7 +127,7 @@ def _write_article(category: str, title: str, link: str, summary: str) -> Path:
 # ──────────────────────────────────────────────
 def run_ingest(limit_per_feed: int = 5) -> None:
     INGEST_PATH.mkdir(parents=True, exist_ok=True)
-    seen_urls = _already_ingested(INGEST_PATH)
+    seen_urls = _load_manifest()
 
     total_new = 0
     total_skipped = 0
@@ -149,6 +160,7 @@ def run_ingest(limit_per_feed: int = 5) -> None:
 
             path = _write_article(category, title, link, summary)
             seen_urls.add(link)
+            _save_manifest(seen_urls)
             print(f"  + {path.name}")
             total_new += 1
             count += 1

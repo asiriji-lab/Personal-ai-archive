@@ -21,7 +21,15 @@ networkx
 # UI & Display
 rich
 tqdm
-matplotlib
+
+# Graph visualization
+pyvis
+
+# System monitoring
+psutil
+
+# Paper Fetcher
+pyyaml
 
 # News Ingest
 requests

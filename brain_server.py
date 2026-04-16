@@ -15,6 +15,7 @@ import sys
 import os
 import json
 import logging
+from contextlib import asynccontextmanager
 
 from fastmcp import FastMCP
 
@@ -35,9 +36,26 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ──────────────────────────────────────────────
+# LIFESPAN — initialize RAG inside the server's event loop
+# ──────────────────────────────────────────────
+@asynccontextmanager
+async def lifespan(server):
+    """Initialize LightRAG storages inside FastMCP's event loop (not before it)."""
+    validate_paths()
+    rag = get_rag()
+    try:
+        await rag.initialize_storages()
+    except ConnectionError as e:
+        logger.error(f"❌ Cannot connect to Ollama: {e}")
+        raise
+    logger.info("✅ Brain Bridge is ONLINE. RAG storages initialized.")
+    yield
+
+
+# ──────────────────────────────────────────────
 # SERVER
 # ──────────────────────────────────────────────
-mcp = FastMCP("BrainBridge")
+mcp = FastMCP("BrainBridge", lifespan=lifespan)
 
 
 @mcp.tool()
@@ -136,18 +154,5 @@ def brain_status() -> str:
     return json.dumps(status, indent=2, default=str)
 
 
-# ──────────────────────────────────────────────
-# STARTUP
-# ──────────────────────────────────────────────
-async def _initialize():
-    """One-time RAG initialization at server startup."""
-    validate_paths()
-    rag = get_rag()
-    await rag.initialize_storages()
-    logger.info("✅ Brain Bridge is ONLINE. RAG storages initialized.")
-
-
 if __name__ == "__main__":
-    import asyncio
-    asyncio.run(_initialize())
     mcp.run()

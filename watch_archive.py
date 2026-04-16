@@ -12,6 +12,7 @@ Usage:
 import asyncio
 import logging
 import sys
+import threading
 import time
 import argparse
 from pathlib import Path
@@ -48,27 +49,29 @@ class ArchiveChangeHandler(FileSystemEventHandler):
         self.debounce_seconds = debounce_seconds
         self._last_trigger = 0.0
         self._pending = False
-        self._lock = asyncio.Lock() if sys.platform != "win32" else None
+        self._lock = threading.Lock()
 
     def _is_markdown(self, path: str) -> bool:
         return path.lower().endswith(".md")
 
     def _schedule_index(self, event_path: str, event_type: str):
-        now = time.time()
-        elapsed = now - self._last_trigger
+        with self._lock:
+            now = time.time()
+            elapsed = now - self._last_trigger
 
-        if elapsed < self.debounce_seconds:
-            if not self._pending:
-                self._pending = True
-                wait = self.debounce_seconds - elapsed
-                logger.info(
-                    f"📋 Change detected ({event_type}: {Path(event_path).name}). "
-                    f"Waiting {wait:.0f}s debounce..."
-                )
-            return
+            if elapsed < self.debounce_seconds:
+                if not self._pending:
+                    self._pending = True
+                    wait = self.debounce_seconds - elapsed
+                    logger.info(
+                        f"📋 Change detected ({event_type}: {Path(event_path).name}). "
+                        f"Waiting {wait:.0f}s debounce..."
+                    )
+                return
 
-        self._pending = False
-        self._last_trigger = now
+            self._pending = False
+            self._last_trigger = now
+
         logger.info(f"🔄 Change detected ({event_type}: {Path(event_path).name}). Starting index...")
         self._run_index()
 
@@ -107,13 +110,17 @@ def _debounce_loop(handler: ArchiveChangeHandler):
     """
     while True:
         time.sleep(5)  # check every 5 seconds
-        if handler._pending:
-            elapsed = time.time() - handler._last_trigger
-            if elapsed >= handler.debounce_seconds:
-                handler._pending = False
-                handler._last_trigger = time.time()
-                logger.info("⏰ Debounce window elapsed. Starting auto-index...")
-                handler._run_index()
+        fire = False
+        with handler._lock:
+            if handler._pending:
+                elapsed = time.time() - handler._last_trigger
+                if elapsed >= handler.debounce_seconds:
+                    handler._pending = False
+                    handler._last_trigger = time.time()
+                    fire = True
+        if fire:
+            logger.info("⏰ Debounce window elapsed. Starting auto-index...")
+            handler._run_index()
 
 
 # ──────────────────────────────────────────────

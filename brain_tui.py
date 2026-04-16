@@ -39,7 +39,7 @@ SCRIPTS = {
     "2": ("Auto-Research", "auto_research.py"),
     "3": ("Bridge", "brain_server.py"),
     "4": ("Manual Query", "test_brain.py"),
-    "5": ("News Harvester", "news_harvester.py"),
+    "5": ("News Harvester", "news_ingest.py"),
     "6": ("Brain Microscope", "brain_explorer.py"),
     "7": ("Auto-Watch", "watch_archive.py"),
     "8": ("Graph Watchdog", "visualize_graph.py"),

@@ -162,8 +162,8 @@ def _purge_chunks(conn: sqlite3.Connection, rel_path: str) -> int:
     ]
     if not row_ids:
         return 0
-    for rid in row_ids:
-        conn.execute("DELETE FROM vec_chunks WHERE rowid = ?", (rid,))
+    placeholders = ",".join("?" * len(row_ids))
+    conn.execute(f"DELETE FROM vec_chunks WHERE rowid IN ({placeholders})", row_ids)
     conn.execute("DELETE FROM chunks WHERE path = ?", (rel_path,))
     return len(row_ids)
 
@@ -249,6 +249,7 @@ def index_resources(reset: bool = False) -> None:
 
         chunks = chunk_markdown(text)
         embed_ok = True
+        stored_count = 0
 
         for idx, chunk in enumerate(chunks):
             try:
@@ -268,6 +269,7 @@ def index_resources(reset: bool = False) -> None:
                 "INSERT INTO vec_chunks (rowid, embedding) VALUES (?, ?)",
                 (chunk_id, pack_embedding(emb)),
             )
+            stored_count += 1
 
         conn.commit()
 
@@ -275,7 +277,7 @@ def index_resources(reset: bool = False) -> None:
             manifest[rel_path] = current_files[rel_path]
             _save_manifest(manifest)
 
-        total_chunks += len(chunks)
+        total_chunks += stored_count
         label = "Re-indexed" if rel_path in changed_paths else "Indexed"
         print(f"  {label}: {rel_path} ({len(chunks)} chunks)")
 

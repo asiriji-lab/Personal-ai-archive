@@ -130,30 +130,31 @@ def reciprocal_rank_fusion(
 # ──────────────────────────────────────────────
 def search(query: str, k: int = TOPK) -> list[dict]:
     conn = open_db()
+    try:
+        query_emb = get_query_embedding(query)
+        vector_scores = vector_search(conn, query_emb, k=CANDIDATE_K)
+        bm25_scores = bm25_search(conn, query, k=CANDIDATE_K)
+        fused = reciprocal_rank_fusion(vector_scores, bm25_scores, k=k)
 
-    query_emb = get_query_embedding(query)
-    vector_scores = vector_search(conn, query_emb, k=CANDIDATE_K)
-    bm25_scores = bm25_search(conn, query, k=CANDIDATE_K)
-    fused = reciprocal_rank_fusion(vector_scores, bm25_scores, k=k)
+        results = []
+        for docid, rrf_score in fused:
+            row = conn.execute(
+                "SELECT path, chunk_index, content FROM chunks WHERE id = ?",
+                (docid,),
+            ).fetchone()
+            if row:
+                results.append(
+                    {
+                        "path": row[0],
+                        "chunk_index": row[1],
+                        "content": row[2],
+                        "rrf_score": rrf_score,
+                    }
+                )
 
-    results = []
-    for docid, rrf_score in fused:
-        row = conn.execute(
-            "SELECT path, chunk_index, content FROM chunks WHERE id = ?",
-            (docid,),
-        ).fetchone()
-        if row:
-            results.append(
-                {
-                    "path": row[0],
-                    "chunk_index": row[1],
-                    "content": row[2],
-                    "rrf_score": rrf_score,
-                }
-            )
-
-    conn.close()
-    return results
+        return results
+    finally:
+        conn.close()
 
 
 # ──────────────────────────────────────────────

@@ -84,8 +84,8 @@ def get_gpu_stats() -> dict:
     Returns None values on failure.
     """
     try:
-        cmd = "nvidia-smi --query-gpu=memory.used,memory.total,utilization.gpu --format=csv,noheader,nounits"
-        output = subprocess.check_output(cmd, shell=True, timeout=5).decode().strip()
+        cmd = ["nvidia-smi", "--query-gpu=memory.used,memory.total,utilization.gpu", "--format=csv,noheader,nounits"]
+        output = subprocess.check_output(cmd, shell=False, timeout=5).decode().strip()
         used, total, util = output.split(", ")
         return {
             "used_mb": int(used),
