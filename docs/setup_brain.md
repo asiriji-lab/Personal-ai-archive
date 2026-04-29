@@ -39,10 +39,12 @@ ollama pull nomic-embed-text
 copy .env.example .env
 # Edit .env and set BRAIN_VAULT_PATH to your Obsidian vault location
 
-# 4. Verify the setup
+# 4. Verify setup — also bootstraps the vault skeleton on first run
 python -c "from config import validate_paths; validate_paths(); print('✅ Config OK')"
+# First run will create knowledge_base/1. Projects/, 2. Areas/, 3. Resources/, 4. Archives/, system/
+# To use an existing Obsidian vault instead, set BRAIN_VAULT_PATH in .env first.
 
-# 5. Build the initial knowledge graph
+# 5. Build the initial knowledge graph (drop .md files in 4. Archives/ first)
 python index_archive.py
 ```
 

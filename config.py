@@ -38,7 +38,7 @@ EMBED_MODEL = os.getenv("BRAIN_EMBED_MODEL", "nomic-embed-text")
 LOCAL_CONTEXT_WINDOW = int(os.getenv("BRAIN_CONTEXT_WINDOW", "4096"))
 
 # Cloud (Gemini)
-GEMINI_MODEL = os.getenv("BRAIN_GEMINI_MODEL", "gemini-1.5-flash")
+GEMINI_MODEL = os.getenv("BRAIN_GEMINI_MODEL", "gemini-2.0-flash")
 GEMINI_API_KEY = os.getenv("GOOGLE_API_KEY", "")
 
 # ──────────────────────────────────────────────
@@ -53,15 +53,25 @@ INDEX_RETRY_BACKOFF = [5, 15, 30]  # seconds between retries
 # ──────────────────────────────────────────────
 # VALIDATION
 # ──────────────────────────────────────────────
+_SKELETON_DIRS = [
+    VAULT_PATH / "1. Projects",
+    VAULT_PATH / "2. Areas",
+    RESOURCES_PATH,   # 3. Resources
+    ARCHIVE_PATH,     # 4. Archives
+    VAULT_PATH / "system",
+]
+
+
 def validate_paths():
-    """Check that critical directories exist at startup."""
-    errors = []
-    if not VAULT_PATH.exists():
-        errors.append(f"Vault path not found: {VAULT_PATH}")
-    if not ARCHIVE_PATH.exists():
-        errors.append(f"Archive path not found: {ARCHIVE_PATH}")
-    if errors:
-        for e in errors:
-            print(f"❌ CONFIG ERROR: {e}", file=sys.stderr)
-        print("\n💡 Set BRAIN_VAULT_PATH in your .env file or environment.", file=sys.stderr)
-        sys.exit(1)
+    """Ensure critical directories exist, creating the skeleton vault if needed."""
+    bootstrapped = []
+    for d in _SKELETON_DIRS:
+        if not d.exists():
+            d.mkdir(parents=True, exist_ok=True)
+            bootstrapped.append(d)
+
+    if bootstrapped:
+        print("🗂️  First run: created vault skeleton:", file=sys.stderr)
+        for d in bootstrapped:
+            print(f"   {d}", file=sys.stderr)
+        print("💡 To use an existing Obsidian vault, set BRAIN_VAULT_PATH in .env\n", file=sys.stderr)
