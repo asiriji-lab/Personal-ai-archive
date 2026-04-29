@@ -18,6 +18,7 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastmcp import FastMCP
+from mcp.types import ToolAnnotations
 
 from config import RESOURCES_PATH, WORKING_DIR, LLM_PROVIDER, validate_paths
 from utils import sanitize_filename, get_gpu_stats
@@ -58,11 +59,17 @@ async def lifespan(server):
 mcp = FastMCP("BrainBridge", lifespan=lifespan)
 
 
-@mcp.tool()
+_MAX_QUERY_LEN = 2000
+_MAX_NOTE_BYTES = 100_000  # 100 KB
+
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, idempotentHint=True))
 async def archive_search(query: str) -> str:
     """Search your Archive Brain for existing knowledge using semantic + graph retrieval."""
     if not query or not query.strip():
         return "Error: Query cannot be empty."
+    if len(query) > _MAX_QUERY_LEN:
+        return f"Error: Query exceeds {_MAX_QUERY_LEN} character limit."
     try:
         result = await test_query(query.strip())
         return result
@@ -71,11 +78,13 @@ async def archive_search(query: str) -> str:
         return json.dumps({"error": str(e), "tool": "archive_search"})
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, idempotentHint=True))
 def vault_search(query: str) -> str:
     """Fast hybrid search (vector + BM25 + RRF) over the full vault index. Best for exact recall and keyword queries."""
     if not query or not query.strip():
         return "Error: Query cannot be empty."
+    if len(query) > _MAX_QUERY_LEN:
+        return f"Error: Query exceeds {_MAX_QUERY_LEN} character limit."
     try:
         results = hybrid_search(query.strip())
         if not results:
@@ -95,14 +104,15 @@ def vault_search(query: str) -> str:
         return json.dumps({"error": str(e), "tool": "vault_search"})
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=False))
 def save_active_note(title: str, content: str) -> str:
     """Save a new note into your 3. Resources folder (Active Vault)."""
-    # Input validation
     if not title or not title.strip():
         return "Error: Title cannot be empty."
     if not content or not content.strip():
         return "Error: Content cannot be empty."
+    if len(content.encode("utf-8")) > _MAX_NOTE_BYTES:
+        return f"Error: Content exceeds {_MAX_NOTE_BYTES // 1000}KB limit."
 
     try:
         safe_title = sanitize_filename(title.strip())
@@ -120,7 +130,7 @@ def save_active_note(title: str, content: str) -> str:
         return json.dumps({"error": str(e), "tool": "save_active_note"})
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, idempotentHint=True))
 def brain_status() -> str:
     """Get the current health status of the Brain (indexed docs, GPU, provider mode)."""
     status = {
@@ -152,6 +162,59 @@ def brain_status() -> str:
         status["entities"] = 0
 
     return json.dumps(status, indent=2, default=str)
+
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, idempotentHint=True))
+def review_queue(status_filter: str = "all") -> str:
+    """Return validation review queue contents.
+       status_filter: "all" | "pending_review" | "failed" | "skipped"
+    """
+    valid_filters = {"all", "pending_review", "failed", "skipped"}
+    if status_filter not in valid_filters:
+        return json.dumps({
+            "error": f"Invalid status_filter '{status_filter}'. Valid values: {sorted(valid_filters)}"
+        })
+
+    from config import VAULT_PATH as _VAULT
+    queue_path = _VAULT / "system" / "review-queue.jsonl"
+
+    if not queue_path.exists():
+        return json.dumps({"entries": [], "message": "Queue is empty."})
+
+    all_entries: list[dict] = []
+    for line in queue_path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            all_entries.append(json.loads(line))
+        except json.JSONDecodeError:
+            logger.warning(f"review_queue: skipping malformed line: {line[:80]}")
+
+    total_entries = len(all_entries)
+
+    if status_filter == "pending_review":
+        filtered = [e for e in all_entries if e.get("status") == "pending_review"]
+    elif status_filter == "failed":
+        filtered = [e for e in all_entries if e.get("validator_verdict") == "fail"]
+    elif status_filter == "skipped":
+        filtered = [e for e in all_entries if e.get("validator_verdict") == "skipped"]
+    else:
+        filtered = list(all_entries)
+
+    filtered.sort(key=lambda e: e.get("timestamp", ""), reverse=True)
+
+    truncated = len(filtered) > 100
+    result: dict = {
+        "total_entries": total_entries,
+        "filtered": len(filtered),
+        "status_filter": status_filter,
+        "entries": filtered[:100],
+    }
+    if truncated:
+        result["truncated"] = True
+
+    return json.dumps(result, indent=2, ensure_ascii=False)
 
 
 if __name__ == "__main__":

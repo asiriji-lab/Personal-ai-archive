@@ -14,7 +14,11 @@ Read this to understand the goals before touching any code.
 Prerequisites, first-time setup, all commands, all environment variables.
 The correct current values are here (not in the code comments, not in your memory).
 
-## 3. [dev_log.md](dev_log.md)
+## 3. [validation-harness.txt](validation-harness.txt)
+**How papers get validated before indexing.**
+The spec for the 7-stage pipeline: claims extraction, Ollama validation, review queue schema, archive handoff, LightRAG trigger. Read this before modifying `scripts/validate_and_archive.py`.
+
+## 4. [dev_log.md](dev_log.md)
 **What was built, what broke, and why.**
 Every non-obvious bug with its root cause. Every design decision with its reasoning.
 Performance numbers measured on real hardware. What works, what doesn't, what's next.
@@ -32,8 +36,10 @@ Two tiers:
   Tier 2  index_archive.py       Archives -> LightRAG knowledge graph (entity + graph search)
 
 Research loop:
-  AutoResearchClaw runs a sprint -> paper lands in 4. Archives/research/
-  -> python index_archive.py --reset -> LightRAG learns it
+  AutoResearchClaw runs a sprint -> artifacts/rc-<run_id>/stage-17/paper_draft.md
+  -> python scripts/validate_and_archive.py --artifact artifacts/rc-<run_id>/
+     (claims extracted, Ollama validates, review queue written, paper enriched)
+  -> enriched .md copied to 4. Archives/ + LightRAG auto-indexed
   -> brain_server.py serves it via MCP to Claude/Cursor
 
 Hardware assumed: RTX 4050 (6GB VRAM), Windows 11, Ollama local

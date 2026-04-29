@@ -1,7 +1,7 @@
 # ZeroCostBrain — Developer Log
 
 > For the next AI, the next human, or whoever is crazy enough to read this.
-> Written after Sprint 1. Last updated: 2026-04-16.
+> Written after Sprint 1. Last updated: 2026-04-29.
 
 ---
 
@@ -51,6 +51,8 @@ ZeroCostBrain/
 ├── brain_server.py          <- MCP server exposing tools to Claude/Cursor
 ├── brain_tui.py             <- Terminal dashboard
 ├── news_ingest.py           <- News -> Archives pipeline
+├── scripts/
+│   └── validate_and_archive.py  <- Validation harness (claims → Ollama → queue → archive → index)
 │
 ├── data/
 │   └── index.db             <- Tier 1 SQLite vector store
@@ -72,7 +74,13 @@ AutoResearchClaw is a 23-stage autonomous research pipeline:
 2. **Stages 10–15**: Experiment design, code generation (via Qwen), resource planning, experiment run, iteration, result analysis.
 3. **Stages 16–23**: Paper outline, draft, peer review, revision, quality gate, knowledge archive, export, citation verify.
 
-After a sprint completes, the deliverables (`paper_final.md`, `paper.tex`, `references.bib`, knowledge cards) land in `autoresearchclaw/artifacts/<run-id>/deliverables/`. You copy these to `knowledge_base/4. Archives/research/`, then run `python index_archive.py --reset` to teach LightRAG everything the paper learned.
+After a sprint completes, the deliverables (`paper_final.md`, `paper.tex`, `references.bib`, knowledge cards) land in `autoresearchclaw/artifacts/<run-id>/deliverables/`. The paper draft itself is at `artifacts/<run-id>/stage-17/paper_draft.md`.
+
+**As of 2026-04-29**, the manual copy step is replaced by the validation harness:
+```powershell
+python scripts/validate_and_archive.py --artifact autoresearchclaw/artifacts/rc-<run-id>/
+```
+This extracts claims, validates them via Ollama (qwen3.5:4b), writes `knowledge_base/system/review-queue.jsonl`, enriches the paper with a `validation_summary:` frontmatter block, copies it to `4. Archives/`, and triggers incremental LightRAG indexing automatically. See `docs/validation-harness.txt` for the full spec.
 
 **Sprint 1 topic**: Survey of cross-encoder reranking for hybrid BM25 + dense retrieval on CPU with sub-2-second latency. This directly feeds back into improving `query.py`.
 
@@ -297,6 +305,60 @@ This is a cleanup artifact from LightRAG's async worker pool shutting down mid-t
 
 ---
 
+## Validation Harness Bugs — 2026-04-29
+
+Bugs found during live testing of `scripts/validate_and_archive.py` against real artifacts.
+
+---
+
+### Bug V1 — `locate_artifacts` Looks at Artifact Root, Not `stage-17/`
+
+**Symptom**: `FileNotFoundError: Missing artifact file(s): ['...paper_draft.md']` on every real AutoResearchClaw artifact.
+
+**Root cause**: The spec assumed `paper_draft.md` would be at the artifact root. In the actual AutoResearchClaw layout, it lives in `stage-17/`. The artifact root only contains `pipeline_summary.json`, `checkpoint.json`, `heartbeat.json`, and stage directories.
+
+**Fix**: `locate_artifacts` now checks root first, then `stage-17/` as a fallback:
+```python
+paper_candidates = [
+    artifact_dir / "paper_draft.md",
+    artifact_dir / "stage-17" / "paper_draft.md",
+]
+paper = next((p for p in paper_candidates if p.exists()), None)
+```
+
+---
+
+### Bug V2 — Section Regex Doesn't Match Numbered Headings
+
+**Symptom**: 0 claims extracted on every real paper. Gemini fallback ran with `paper_text[:800]` (dense method-section math) instead of the abstract/conclusion, returning empty or useless results.
+
+**Root cause**: AutoResearchClaw papers use numbered headings: `## 10. Conclusion`, `## 1. Introduction`. The extraction regex `r'^#{1,3}\s*conclusion'` requires the heading to start with the word directly — it doesn't match when a section number precedes it.
+
+**Fix**: Allow an optional number prefix in all section regexes:
+```python
+r"^#{1,3}\s*(\d+\.\s*)?conclusion"
+r"^#{1,3}\s*(\d+\.\s*)?abstract"
+```
+Applied in both `_extract_from_llm()` and the context-building block in `run_pipeline()`.
+
+---
+
+### Bug V3 — `gemini-1.5-flash` Returns 404
+
+**Symptom**: `404 Client Error: Not Found` on every Gemini call. Claims extraction silently returns `[]`.
+
+**Root cause**: `gemini-1.5-flash` has been deprecated and returns 404 via the REST API. The default in `config.py` was never updated.
+
+**Fix**: Set in `.env`:
+```
+BRAIN_GEMINI_MODEL=gemini-2.0-flash
+```
+Or `gemini-2.0-flash-lite` for higher free-tier quota. The `BRAIN_GEMINI_MODEL` env var overrides the config default without touching `config.py`.
+
+**Note**: The free tier of both `gemini-2.0-flash` and `gemini-2.0-flash-lite` has a daily quota. When exhausted, the harness logs a 429 warning and proceeds with 0 claims (no block on ingestion). Quota resets at midnight Pacific.
+
+---
+
 ## Code Review Audit — 2026-04-16
 
 Full audit of the codebase identified 9 real bugs (2 critical, 1 security, 4 correctness, 2 maintenance). All fixed in one session. Log below for future reference.
@@ -476,11 +538,13 @@ nvidia-smi -lms 100 --query-gpu=timestamp,temperature.gpu,clocks.gr,utilization.
 - [x] `eval/run_eval.py` measures Recall@10 across stratified queries
 - [x] AutoResearchClaw Sprint 1 completed: cross-encoder reranking survey paper generated
 - [x] Self-improvement loop defined: research → paper → archive → graph → implement
+- [x] Validation harness: `scripts/validate_and_archive.py` — claims extraction, Ollama validation, review queue, archive enrichment, auto-indexing (2026-04-29)
+- [x] `brain_server.py`: `review_queue` MCP tool — returns queue contents filtered by status/verdict (2026-04-29)
+- [x] `index_archive.py`: `index_single_file(path)` public API extracted for single-file indexing (2026-04-29)
 
 ## What Is Not Done Yet
 
-- [ ] Copy Sprint 1 deliverables into `knowledge_base/4. Archives/research/` and verify indexing completes
-- [ ] Run `brain_server.py` and test MCP queries against indexed Sprint 1 paper
+- [ ] Gemini quota currently exhausted — re-test claims extraction end-to-end once quota resets
 - [ ] Implement cross-encoder reranker in `query.py` based on Sprint 1 findings
 - [ ] Sprint 2: Knowledge graph pruning strategies for PKM
 - [ ] Sprint 3: Auto MOC generation from entity graphs

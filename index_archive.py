@@ -198,6 +198,40 @@ def get_rag() -> LightRAG:
 # ──────────────────────────────────────────────
 # SINGLE FILE INDEXER (with retry)
 # ──────────────────────────────────────────────
+async def index_single_file(file_path: Path) -> None:
+    """
+    Public API: index one file into LightRAG, update manifest and failure log.
+    Raises RuntimeError on failure after all retries.
+    Called by validate_and_archive.py; the existing CLI uses the batch indexer below.
+    """
+    rag = get_rag()
+    await rag.initialize_storages()
+
+    fp = str(file_path)
+    fh = _file_hash(fp)
+
+    manifest = _load_manifest()
+    failures = _load_failures()
+
+    success, error_msg = await _index_single_file(rag, fp)
+
+    if success:
+        manifest[fp] = fh
+        _save_manifest(manifest)
+        if fp in failures:
+            del failures[fp]
+            _save_failures(failures)
+        logger.info(f"✅ Indexed: {file_path.name}")
+    else:
+        failures[fp] = {
+            "error": error_msg,
+            "attempts": INDEX_MAX_RETRIES,
+            "last_attempt": str(file_path.stat().st_mtime),
+        }
+        _save_failures(failures)
+        raise RuntimeError(f"Failed to index {file_path.name}: {error_msg}")
+
+
 async def _index_single_file(rag, file_path: str, max_retries: int = INDEX_MAX_RETRIES) -> tuple[bool, str]:
     """
     Index a single file with retry logic.

@@ -87,15 +87,29 @@ To prevent VRAM thrashing during bulk file operations (e.g., moving a folder), t
 
 To add a new tool for your AI agent (e.g., "Summarize Project"):
 1. Open `brain_server.py`.
-2. Add a new function with the `@mcp.tool()` decorator:
+2. Add a new function with the `@mcp.tool()` decorator. Always include `ToolAnnotations` so calling agents know whether the tool is safe to auto-approve:
 ```python
-@mcp.tool()
+from mcp.types import ToolAnnotations
+
+# Read-only tool — agents can call without confirmation
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, idempotentHint=True))
 def summarize_project(name: str) -> str:
     """Summarize a specific project from the archive."""
     # Your logic here...
     return "Summary result"
+
+# Destructive tool — agents should confirm before calling
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=False))
+def delete_note(title: str) -> str:
+    """Delete a note from Resources."""
+    ...
 ```
-3. Restart the `brain_server.py`.
+3. Restart `brain_server.py`.
+
+**Annotation reference:**
+- `readOnlyHint=True` — tool does not modify any state
+- `destructiveHint=True` — tool may overwrite or delete data
+- `idempotentHint=True` — calling it twice has the same effect as once (safe to retry)
 
 ---
 

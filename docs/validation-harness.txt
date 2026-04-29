@@ -1,0 +1,379 @@
+ZeroCostBrain — Validation Harness Specification
+=================================================
+Version: 1.0  |  Status: Draft  |  Date: 2026-04-29
+
+OVERVIEW
+--------
+A best-effort validation harness that sits between AutoResearchClaw paper
+generation and LightRAG indexing. Implemented as a single script:
+
+    scripts/validate_and_archive.py
+
+Invocation:
+    python scripts/validate_and_archive.py --artifact <path/to/rc-<run_id>/
+    python scripts/validate_and_archive.py --watch   # polls artifacts/ for new runs
+
+The script is self-contained. It reads from config.py for paths and provider
+settings, and writes to the vault without introducing new dependencies beyond
+what the project already uses.
+
+
+PIPELINE OVERVIEW
+-----------------
+Input:  autoresearchclaw/artifacts/rc-<run_id>/
+            paper_draft.md
+            pipeline_summary.json
+
+Stages: 1. Locate artifact files
+        2. Extract claims
+        3. Validate claims (best-effort, Ollama)
+        4. Write review queue entries
+        5. Enrich paper_draft.md with validation metadata
+        6. Copy enriched file to 4. Archives/
+        7. Trigger LightRAG indexing on the archived file
+
+Output: knowledge_base/4. Archives/<sanitized_title>.md  (enriched)
+        knowledge_base/system/review-queue.jsonl         (authoritative)
+        knowledge_base/system/review-queue.md            (human-readable, regenerated)
+
+
+────────────────────────────────────────────────────────────────────────────────
+STAGE 1 — LOCATE ARTIFACT FILES
+────────────────────────────────────────────────────────────────────────────────
+Given artifact_dir (Path), assert:
+  - artifact_dir / "paper_draft.md" exists
+  - artifact_dir / "pipeline_summary.json" exists
+
+If either is missing, log an error and exit with code 1. Do not proceed.
+
+The run_id is derived from the artifact directory name (e.g. "rc-abc123").
+
+
+────────────────────────────────────────────────────────────────────────────────
+STAGE 2 — CLAIMS EXTRACTION
+────────────────────────────────────────────────────────────────────────────────
+Goal: produce a list of strings, each a discrete factual claim.
+
+PRIMARY PATH — Structured claims from pipeline_summary.json
+  Load pipeline_summary.json. Check for any of these top-level keys (in order):
+    "knowledge_cards", "claims", "summary", "key_findings"
+  If found, extract claims as follows:
+    - If the value is a list of strings → use directly.
+    - If the value is a list of dicts → extract the "text", "claim", or "content"
+      field from each dict.
+    - If the value is a plain string → split on ". " and use each sentence as a
+      claim, filtering out sentences shorter than 20 characters.
+  If any of these keys yield at least one claim, skip the fallback path.
+
+FALLBACK PATH — LLM extraction from paper_draft.md
+  Triggered when: pipeline_summary.json has none of the above keys, or the
+  extraction yields zero claims.
+
+  Extract the abstract and conclusion sections from paper_draft.md:
+    - Abstract: lines after a heading matching /^#{1,3}\s*(abstract)/i until the
+      next heading.
+    - Conclusion: lines after a heading matching /^#{1,3}\s*(conclusion)/i until
+      the next heading or end of file.
+  Concatenate the two sections (abstract first). If neither section is found,
+  use the first 800 characters of the file body.
+
+  Call Gemini Flash (existing GEMINI_API_KEY / GEMINI_MODEL from config.py) with:
+    System: "You are a precise claim extractor. Return only a JSON array of
+             strings. Each string is one distinct factual claim from the text.
+             Limit to 15 claims maximum. No preamble."
+    User:   "<extracted text>"
+
+  Parse the response as JSON. On parse failure or API error, set claims = []
+  and log a warning. Never raise.
+
+CLAIM COUNT LIMITS
+  Cap claims at 20 per paper to bound validation cost.
+  If extraction yields more than 20, take the first 20.
+
+
+────────────────────────────────────────────────────────────────────────────────
+STAGE 3 — CLAIM VALIDATION
+────────────────────────────────────────────────────────────────────────────────
+Goal: for each claim, produce a verdict record.
+
+VALIDATOR MODEL
+  Default: Ollama at OLLAMA_HOST (from config.py), model VALIDATOR_MODEL.
+  VALIDATOR_MODEL defaults to "qwen3.5:4b".
+  Override via environment variable BRAIN_VALIDATOR_MODEL.
+
+  This is deliberately separate from LOCAL_LLM_MODEL (which is the brain's
+  reasoning model). The validator is lightweight and claim-scoped.
+
+SOURCE CONTEXT
+  For each claim, provide the full text of the section it was extracted from
+  (abstract or conclusion, or the 800-char fallback). If claims came from the
+  primary path (pipeline_summary.json), use the full paper abstract as context.
+  Truncate context to 1200 characters to fit within the validator's window.
+
+PROMPT (per claim)
+  System: "You are a fact-checking assistant. Given source text and a claim,
+           decide if the claim accurately reflects the source. Respond ONLY
+           with valid JSON: {\"verdict\": \"pass\" or \"fail\",
+           \"explanation\": \"one sentence\"}. No other text."
+  User:   "Source text:\n<context>\n\nClaim:\n<claim_text>"
+
+RESPONSE PARSING
+  Expect JSON with keys "verdict" (string) and "explanation" (string).
+  Acceptable verdicts: "pass", "fail".
+  On parse failure or unexpected verdict value, treat as "fail" and set
+  explanation to "Validator returned unparseable response."
+
+OLLAMA UNAVAILABILITY
+  Before validating, probe Ollama with a HEAD request to OLLAMA_HOST.
+  If the probe fails (connection refused, timeout > 3s), set validator_available
+  = False and skip validation for all claims:
+    verdict = "skipped"
+    explanation = "Ollama unavailable at validation time"
+  Log one warning: "Validator offline — all claims marked as skipped."
+  Do not retry per-claim. Continue to Stage 4 immediately.
+
+PER-CLAIM TIMEOUT
+  Each Ollama call has a 15-second timeout. On timeout, treat as unavailable
+  for that claim only (verdict = "skipped", explanation = "Validator timeout").
+
+CONFIDENCE HEURISTIC
+  Assign a float confidence to each claim:
+    pass    → 0.90
+    fail    → 0.20
+    skipped → 0.50
+  These are static defaults. They exist for downstream filtering; no ML scoring
+  is performed.
+
+
+────────────────────────────────────────────────────────────────────────────────
+STAGE 4 — REVIEW QUEUE
+────────────────────────────────────────────────────────────────────────────────
+PATHS
+  QUEUE_DIR  = VAULT_PATH / "system"          (create if absent)
+  QUEUE_JSONL = QUEUE_DIR / "review-queue.jsonl"
+  QUEUE_MD    = QUEUE_DIR / "review-queue.md"
+
+JSONL SCHEMA (one JSON object per line, UTF-8, no trailing comma)
+  {
+    "timestamp":            "<ISO 8601 UTC>",
+    "run_id":               "<rc-...>",
+    "source_file":          "<relative path from vault root to archived .md>",
+    "claim_text":           "<string>",
+    "confidence":           <float>,
+    "validator_verdict":    "pass|fail|skipped",
+    "validator_explanation":"<string>",
+    "status":               "pending_review|accepted|rejected"
+  }
+
+  Initial status for all entries: "pending_review".
+  status is the only field a human edits; the script never modifies existing
+  lines after writing them.
+
+WRITE BEHAVIOR
+  Append all claim records for the current run in a single operation.
+  Use file locking (fcntl on Unix, msvcrt on Windows) to prevent corruption
+  if two runs overlap.
+
+MARKDOWN REGENERATION
+  After appending to the JSONL, regenerate review-queue.md in full from the
+  entire JSONL contents. Format:
+
+    # Review Queue
+    _Last updated: <ISO 8601 UTC>_
+
+    ## <source_file> — <run_id>
+    | # | Claim | Verdict | Confidence | Explanation | Status |
+    |---|-------|---------|------------|-------------|--------|
+    | 1 | ...   | ✅ pass  | 0.90       | ...         | pending_review |
+
+  Group entries by source_file + run_id. Sort groups by timestamp descending
+  (most recent paper first). Within a group, preserve claim order.
+  Verdict emoji: pass → ✅, fail → ❌, skipped → ⏭️.
+  Truncate claim_text and explanation to 120 characters in the table.
+
+
+────────────────────────────────────────────────────────────────────────────────
+STAGE 5 — ENRICH PAPER_DRAFT.MD
+────────────────────────────────────────────────────────────────────────────────
+Work on a copy of paper_draft.md. Do not modify the original artifact.
+
+YAML FRONTMATTER
+  If the file already has YAML frontmatter (--- ... ---), insert the block
+  inside it. If not, prepend a new frontmatter block before the file body.
+
+  Fields to inject:
+    validation_summary:
+      run_id: "<rc-...>"
+      validated_at: "<ISO 8601 UTC>"
+      total_claims: <int>
+      passed: <int>
+      failed: <int>
+      skipped: <int>
+      failed_claims: ["<claim_text>", ...]   # only claims with verdict "fail"
+
+  failed_claims is omitted (empty list) if there are no failures.
+
+WARNING BLOCK
+  If failed > 0, prepend this blockquote immediately after the frontmatter
+  closing --- and before the paper title heading:
+
+    > ⚠️ **Validation Warning:** This paper contains claims that did not pass
+    > automated validation. Review flagged entries before treating this document
+    > as authoritative.
+    > See `vault/system/review-queue.md` for details.
+
+  If failed == 0 and skipped == 0, no warning block is added.
+  If failed == 0 but skipped > 0, prepend a softer notice instead:
+
+    > ℹ️ **Validation Note:** Automated validation was unavailable for
+    > <skipped> claim(s). Results are unverified.
+    > See `vault/system/review-queue.md` for details.
+
+
+────────────────────────────────────────────────────────────────────────────────
+STAGE 6 — COPY TO ARCHIVES
+────────────────────────────────────────────────────────────────────────────────
+Destination filename derivation:
+  1. If paper_draft.md has a YAML "title" field, use that.
+  2. Else use the first H1 heading (# Title) found in the file.
+  3. Else use the run_id.
+  Apply sanitize_filename() from utils.py to produce a safe filename.
+  Final path: ARCHIVE_PATH / "<sanitized_title>.md"
+
+If a file with that name already exists in Archives:
+  Append "_<run_id>" suffix before the extension.
+  Example: "My_Paper_rc-abc123.md"
+
+Write the enriched content (from Stage 5) to the destination path.
+Log the destination path at INFO level.
+
+
+────────────────────────────────────────────────────────────────────────────────
+STAGE 7 — TRIGGER LIGHTRAG INDEXING
+────────────────────────────────────────────────────────────────────────────────
+After the enriched file is written to Archives, run index_archive.py in
+incremental mode on that single file.
+
+Import and call directly (do not subprocess):
+  from index_archive import index_single_file
+  await index_single_file(destination_path)
+
+index_single_file must be an async function that:
+  - Initializes LightRAG (reuse get_rag() from index_archive.py)
+  - Reads the file, chunks it via chunk_text()
+  - Calls rag.ainsert() on the chunks
+  - Updates the index_manifest.json entry for the file
+  - On failure, writes to index_failures.json (existing retry mechanism)
+
+If index_single_file does not yet exist as a standalone function, the script
+refactors the relevant logic out of the existing index_archive.py loop into
+that function without changing external behavior. The existing CLI entry point
+continues to work by calling index_single_file() per file.
+
+Indexing failure must not raise out of the harness script. Log the error,
+leave the enriched file in Archives (it is valid), and exit with code 2
+(distinguishable from validation errors which use code 1).
+
+
+────────────────────────────────────────────────────────────────────────────────
+FASTMCP BRIDGE EXTENSION
+────────────────────────────────────────────────────────────────────────────────
+Add to brain_server.py:
+
+  @mcp.tool()
+  def review_queue(status_filter: str = "all") -> str:
+      """Return validation review queue contents.
+         status_filter: "all" | "pending_review" | "failed" | "skipped"
+      """
+
+IMPLEMENTATION
+  Read QUEUE_JSONL (VAULT_PATH / "system" / "review-queue.jsonl").
+  If the file does not exist, return JSON: {"entries": [], "message": "Queue is empty."}.
+  Parse each line as JSON. Skip malformed lines (log a warning per skip).
+
+  Filter by status_filter:
+    "all"            → all entries
+    "pending_review" → entries where status == "pending_review"
+    "failed"         → entries where validator_verdict == "fail"
+    "skipped"        → entries where validator_verdict == "skipped"
+  Invalid filter value → return error JSON.
+
+  Return JSON:
+    {
+      "total_entries": <int>,
+      "filtered": <int>,
+      "status_filter": "<value>",
+      "entries": [ <entry objects> ]
+    }
+
+  Entries are sorted by timestamp descending. Cap at 100 entries in the
+  response to bound MCP payload size. If the queue exceeds 100 entries after
+  filtering, include a "truncated": true field in the response.
+
+
+────────────────────────────────────────────────────────────────────────────────
+CONFIGURATION REFERENCE
+────────────────────────────────────────────────────────────────────────────────
+All existing config.py values are inherited as-is. New env vars:
+
+  BRAIN_VALIDATOR_MODEL   Ollama model for claim validation
+                          Default: "qwen3.5:4b"
+
+  BRAIN_VALIDATOR_TIMEOUT Timeout in seconds per Ollama call
+                          Default: 15
+
+No changes to config.py are required; the script reads these directly via
+os.getenv() with the defaults above.
+
+
+────────────────────────────────────────────────────────────────────────────────
+WATCH MODE
+────────────────────────────────────────────────────────────────────────────────
+--watch flag: poll autoresearchclaw/artifacts/ every 30 seconds.
+  - Maintain a local set of already-processed run_ids (in-memory; not persisted).
+  - When a new directory rc-<run_id> appears AND pipeline_summary.json is
+    present in it (completion signal), run the full pipeline for that artifact.
+  - Log each poll at DEBUG level to avoid noise.
+  - Ctrl-C exits cleanly.
+
+
+────────────────────────────────────────────────────────────────────────────────
+ERROR HANDLING SUMMARY
+────────────────────────────────────────────────────────────────────────────────
+Condition                          Behavior                         Exit code
+---------------------------------  -------------------------------  ---------
+Missing artifact files             Log error, abort                 1
+Claims extraction yields 0 claims  Log warning, skip validation,    0
+                                   write queue entries with
+                                   verdict "skipped", proceed to
+                                   indexing
+Ollama unavailable                 All claims → "skipped",          0
+                                   proceed
+Ollama timeout (per claim)         That claim → "skipped",          0
+                                   continue other claims
+Gemini API error (fallback path)   claims = [], log warning,        0
+                                   proceed with empty claim list
+LightRAG indexing failure          Log error, file stays in         2
+                                   Archives, queue already written
+File collision in Archives         Append run_id suffix, proceed    0
+Queue write failure                Log error, abort before          1
+                                   enriching/copying (queue
+                                   integrity takes priority)
+
+
+────────────────────────────────────────────────────────────────────────────────
+FILES CREATED OR MODIFIED
+────────────────────────────────────────────────────────────────────────────────
+New:
+  scripts/validate_and_archive.py
+  knowledge_base/system/review-queue.jsonl    (created on first run)
+  knowledge_base/system/review-queue.md       (regenerated on each run)
+
+Modified:
+  brain_server.py                             (add review_queue tool)
+  index_archive.py                            (extract index_single_file function)
+
+No new packages required beyond what the project already installs.
+fcntl is stdlib on Unix; on Windows use msvcrt.locking or a threading.Lock
+as a same-process guard (cross-process locking is not needed for the watch
+use case on a single machine).

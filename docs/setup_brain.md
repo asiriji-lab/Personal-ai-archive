@@ -67,6 +67,8 @@ This folder is a complete VS Code workspace:
 | `python index_archive.py --reset` | Full re-index from scratch. |
 | `python index_archive.py --retry-failed` | Retry only files that failed previous indexing. |
 | `python brain_server.py` | Start MCP Bridge for AI agents. |
+| `python scripts/validate_and_archive.py --artifact <path>` | Validate and archive one AutoResearchClaw artifact. |
+| `python scripts/validate_and_archive.py --watch` | Watch `artifacts/` and process new runs automatically (30s poll). |
 | `python watch_archive.py` | Background service to auto-index new files (60s debounce). |
 | `python brain_explorer.py` | View knowledge graph concepts & relations. |
 | `python query.py "question"` | Fast hybrid search over the **Active Vault**. |
@@ -87,6 +89,9 @@ All configuration is in `config.py` with `.env` overrides:
 | `GOOGLE_API_KEY` | *(empty)* | Gemini API key (if using cloud). |
 | `BRAIN_INDEX_MAX_RETRIES` | `3` | Max retry attempts per file during indexing. |
 | `BRAIN_CHUNK_SIZE` | `1500` | Max chars per document chunk. |
+| `BRAIN_GEMINI_MODEL` | `gemini-2.0-flash` | Gemini model for claims extraction fallback. |
+| `BRAIN_VALIDATOR_MODEL` | `qwen3.5:4b` | Ollama model for claim validation (separate from brain LLM). |
+| `BRAIN_VALIDATOR_TIMEOUT` | `15` | Per-claim validation timeout in seconds. |
 
 ## 🏁 7. Performance Optimization (Windows)
 
