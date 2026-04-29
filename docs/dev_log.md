@@ -1,7 +1,7 @@
 # ZeroCostBrain — Developer Log
 
 > For the next AI, the next human, or whoever is crazy enough to read this.
-> Written after Sprint 1. Last updated: 2026-04-29.
+> Written after Sprint 1. Last updated: 2026-04-30.
 
 ---
 
@@ -302,6 +302,68 @@ RuntimeError: no running event loop
 This is a cleanup artifact from LightRAG's async worker pool shutting down mid-task. It is cosmetic — it does not indicate data corruption. The real error is the timeout that preceded it.
 
 ---
+
+---
+
+## Install Path Audit — 2026-04-30
+
+Full review of what breaks for a net-new user cloning the repo. All issues fixed in one pass.
+
+---
+
+### Issue 1 — `qwen3.5:4b-brain` not documented in setup guide (Critical)
+
+**Problem**: `config.py` defaults to `qwen3.5:4b-brain` (required for thinking-off + num_ctx=4096 — see Bug 7). The setup guide only said `ollama pull qwen3.5:4b`. New users get "model not found" from Ollama on every LLM call.
+
+**Fix**: Added `ollama create qwen3.5:4b-brain` step to `docs/setup_brain.md` step 2, with PowerShell and Linux/macOS variants.
+
+---
+
+### Issue 2 — `embed.py` missing from setup guide (Critical)
+
+**Problem**: `vault_search` (Tier 1, `3. Resources`) requires `data/index.db`, which is created by `embed.py`. The setup guide only mentioned `index_archive.py` (Tier 2). `query.py` hard-exits with "Run embed.py first" if the DB is missing. New users' first `vault_search` call silently dies.
+
+**Fix**: Added step 5 (`python embed.py`) to `docs/setup_brain.md` before the archive indexing step.
+
+---
+
+### Issue 3 — `.vscode/launch.json` gitignored (Critical for VS Code users)
+
+**Problem**: `.gitignore` excluded all of `.vscode/`. The setup guide's step 4 ("Use the dropdown at the top to select...") requires `launch.json` — new users got an empty Run & Debug panel.
+
+**Fix**: Changed `.gitignore` from `.vscode/` to `.vscode/*` + `!.vscode/launch.json` so `launch.json` is tracked.
+
+---
+
+### Issue 4 — `.env.example` had stale `gemini-1.5-flash` (Medium)
+
+**Problem**: The commented example showed `BRAIN_GEMINI_MODEL=gemini-1.5-flash`. Any user who uncommented that line would override the fixed config.py default and get 404s from the Gemini API. `gemini-1.5-flash` was deprecated and removed.
+
+**Fix**: Updated to `gemini-2.0-flash`.
+
+---
+
+### Issue 5 — `.env.example` had `BRAIN_CONTEXT_WINDOW=8192` (Medium)
+
+**Problem**: The commented example showed 8192. The actual safe value for RTX 4050 (6GB VRAM) is 4096. A user who uncommented it would OOM Ollama's KV cache allocation.
+
+**Fix**: Changed example to `4096` with a separate comment explaining the 8GB+ VRAM option.
+
+---
+
+### Issue 6 — TUI slot 2 pointed to nonexistent `auto_research.py` (Minor)
+
+**Problem**: `brain_tui.py` menu option 2 was "Auto-Research" → `auto_research.py`, which was never shipped. Always showed "(missing)". Also prompted for a topic argument that had no use.
+
+**Fix**: Replaced with "Resource Indexer" → `embed.py`. Removed the topic `Prompt.ask` branch.
+
+---
+
+### Issue 7 — `.env.example` showed `BRAIN_LOCAL_MODEL=qwen3.5:4b` (Minor)
+
+**Problem**: Config default is `qwen3.5:4b-brain` but `.env.example` showed the base model name `qwen3.5:4b`. A user setting this explicitly would lose the thinking-off benefits built into the custom model.
+
+**Fix**: Updated `.env.example` to show `qwen3.5:4b-brain` with a comment pointing to the setup step that creates it.
 
 ---
 

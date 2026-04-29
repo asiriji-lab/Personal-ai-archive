@@ -33,7 +33,8 @@ docs/architecture_*.html
 eval/failures.json
 
 # IDE
-.vscode/
+.vscode/*
+!.vscode/launch.json
 .idea/
 .project
 .pydevproject

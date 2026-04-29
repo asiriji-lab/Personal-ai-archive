@@ -31,20 +31,35 @@ The system operates in two distinct tiers to optimize for performance and VRAM:
 # 1. Install Python dependencies
 pip install -r requirements.txt
 
-# 2. Pull the required Ollama models
+# 2. Pull base model and embedder, then create the custom brain model
 ollama pull qwen3.5:4b
 ollama pull nomic-embed-text
+# Create qwen3.5:4b-brain: disables thinking trace (avoids timeout) and locks num_ctx=4096
+# On Windows PowerShell:
+@"
+FROM qwen3.5:4b
+PARAMETER num_ctx 4096
+PARAMETER num_gpu 99
+"@ | Out-File -FilePath "$env:TEMP\Modelfile" -Encoding utf8
+ollama create qwen3.5:4b-brain -f "$env:TEMP\Modelfile"
+# On Linux/macOS:
+# printf "FROM qwen3.5:4b\nPARAMETER num_ctx 4096\nPARAMETER num_gpu 99\n" > /tmp/Modelfile
+# ollama create qwen3.5:4b-brain -f /tmp/Modelfile
 
 # 3. Configure your vault path
 copy .env.example .env
 # Edit .env and set BRAIN_VAULT_PATH to your Obsidian vault location
 
 # 4. Verify setup — also bootstraps the vault skeleton on first run
-python -c "from config import validate_paths; validate_paths(); print('✅ Config OK')"
+python -c "from config import validate_paths; validate_paths(); print('Config OK')"
 # First run will create knowledge_base/1. Projects/, 2. Areas/, 3. Resources/, 4. Archives/, system/
 # To use an existing Obsidian vault instead, set BRAIN_VAULT_PATH in .env first.
 
-# 5. Build the initial knowledge graph (drop .md files in 4. Archives/ first)
+# 5. Index your Active Vault (3. Resources) into the SQLite vector store
+python embed.py
+# Drop .md files into 3. Resources/ first. This enables vault_search via the MCP bridge.
+
+# 6. Build the initial knowledge graph (drop .md files in 4. Archives/ first)
 python index_archive.py
 ```
 
@@ -65,6 +80,8 @@ This folder is a complete VS Code workspace:
 | Command | Description |
 |---------|-------------|
 | `python brain_tui.py` | Main cockpit — dashboard, vitals, launcher. |
+| `python embed.py` | Index `3. Resources/` into SQLite vector store (Tier 1). Run after adding notes. |
+| `python embed.py --reset` | Drop and rebuild the Tier 1 index from scratch. |
 | `python index_archive.py` | Index new/changed archive files (Incremental). |
 | `python index_archive.py --reset` | Full re-index from scratch. |
 | `python index_archive.py --retry-failed` | Retry only files that failed previous indexing. |

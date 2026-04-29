@@ -36,7 +36,7 @@ PYTHON = _VENV_PYTHON if os.path.exists(_VENV_PYTHON) else sys.executable
 
 SCRIPTS = {
     "1": ("Indexer", "index_archive.py"),
-    "2": ("Auto-Research", "auto_research.py"),
+    "2": ("Resource Indexer", "embed.py"),
     "3": ("Bridge", "brain_server.py"),
     "4": ("Manual Query", "test_brain.py"),
     "5": ("News Harvester", "news_ingest.py"),
@@ -237,9 +237,7 @@ def main():
         if choice == "X":
             break
         elif choice == "2":
-            # Auto-Research needs a topic argument
-            topic = Prompt.ask("[bold cyan]Topic[/]")
-            run_task("Auto-Research", "auto_research.py", extra_args=[topic])
+            run_task("Resource Indexer", "embed.py")
         elif choice == "1" and _is_indexer_running():
             # Indexing is live — launch graph watchdog instead
             run_task("Graph Watchdog", "visualize_graph.py", extra_args=["--watch"])
