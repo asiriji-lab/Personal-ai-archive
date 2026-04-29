@@ -1,0 +1,213 @@
+{
+  "nodes": [
+    {
+      "id": "fix_config_vault_path",
+      "label": "Fix config.py VAULT_PATH relative path",
+      "type": "improvement",
+      "severity": "High",
+      "files": [
+        "config.py"
+      ]
+    },
+    {
+      "id": "fix_lifespan_shutdown",
+      "label": "LightRAG finalize in brain_server.py lifespan",
+      "type": "improvement",
+      "severity": "High",
+      "files": [
+        "brain_server.py",
+        "index_archive.py"
+      ]
+    },
+    {
+      "id": "rename_test_query",
+      "label": "Rename test_query to query_archive",
+      "type": "improvement",
+      "severity": "Low",
+      "files": [
+        "index_archive.py",
+        "brain_server.py"
+      ]
+    },
+    {
+      "id": "add_cross_encoder_reranker",
+      "label": "Cross-encoder reranker in query.py (Sprint 1)",
+      "type": "improvement",
+      "severity": "High",
+      "files": [
+        "query.py"
+      ]
+    },
+    {
+      "id": "unify_chunkers",
+      "label": "Unify two chunking strategies",
+      "type": "improvement",
+      "severity": "Medium",
+      "files": [
+        "embed.py",
+        "index_archive.py",
+        "utils.py"
+      ]
+    },
+    {
+      "id": "create_auto_research",
+      "label": "Create missing auto_research.py",
+      "type": "improvement",
+      "severity": "Medium",
+      "files": [
+        "auto_research.py",
+        "brain_tui.py"
+      ]
+    },
+    {
+      "id": "fix_functools_wraps",
+      "label": "Add functools.wraps to _make_timed_llm",
+      "type": "improvement",
+      "severity": "Low",
+      "files": [
+        "index_archive.py"
+      ]
+    },
+    {
+      "id": "async_consistency",
+      "label": "Async consistency (query.py vs archive_search)",
+      "type": "improvement",
+      "severity": "Low",
+      "files": [
+        "query.py",
+        "brain_server.py"
+      ]
+    },
+    {
+      "id": "file_config.py",
+      "label": "config.py",
+      "type": "file"
+    },
+    {
+      "id": "file_brain_server.py",
+      "label": "brain_server.py",
+      "type": "file"
+    },
+    {
+      "id": "file_index_archive.py",
+      "label": "index_archive.py",
+      "type": "file"
+    },
+    {
+      "id": "file_query.py",
+      "label": "query.py",
+      "type": "file"
+    },
+    {
+      "id": "file_embed.py",
+      "label": "embed.py",
+      "type": "file"
+    },
+    {
+      "id": "file_utils.py",
+      "label": "utils.py",
+      "type": "file"
+    },
+    {
+      "id": "file_auto_research.py",
+      "label": "auto_research.py",
+      "type": "file"
+    },
+    {
+      "id": "file_brain_tui.py",
+      "label": "brain_tui.py",
+      "type": "file"
+    }
+  ],
+  "edges": [
+    {
+      "source": "fix_config_vault_path",
+      "target": "file_config.py",
+      "relation": "affects",
+      "confidence": "EXTRACTED"
+    },
+    {
+      "source": "fix_lifespan_shutdown",
+      "target": "file_brain_server.py",
+      "relation": "affects",
+      "confidence": "EXTRACTED"
+    },
+    {
+      "source": "fix_lifespan_shutdown",
+      "target": "file_index_archive.py",
+      "relation": "affects",
+      "confidence": "EXTRACTED"
+    },
+    {
+      "source": "rename_test_query",
+      "target": "file_index_archive.py",
+      "relation": "affects",
+      "confidence": "EXTRACTED"
+    },
+    {
+      "source": "rename_test_query",
+      "target": "file_brain_server.py",
+      "relation": "affects",
+      "confidence": "EXTRACTED"
+    },
+    {
+      "source": "add_cross_encoder_reranker",
+      "target": "file_query.py",
+      "relation": "affects",
+      "confidence": "EXTRACTED"
+    },
+    {
+      "source": "unify_chunkers",
+      "target": "file_embed.py",
+      "relation": "affects",
+      "confidence": "EXTRACTED"
+    },
+    {
+      "source": "unify_chunkers",
+      "target": "file_index_archive.py",
+      "relation": "affects",
+      "confidence": "EXTRACTED"
+    },
+    {
+      "source": "unify_chunkers",
+      "target": "file_utils.py",
+      "relation": "affects",
+      "confidence": "EXTRACTED"
+    },
+    {
+      "source": "create_auto_research",
+      "target": "file_auto_research.py",
+      "relation": "affects",
+      "confidence": "EXTRACTED"
+    },
+    {
+      "source": "create_auto_research",
+      "target": "file_brain_tui.py",
+      "relation": "affects",
+      "confidence": "EXTRACTED"
+    },
+    {
+      "source": "fix_functools_wraps",
+      "target": "file_index_archive.py",
+      "relation": "affects",
+      "confidence": "EXTRACTED"
+    },
+    {
+      "source": "async_consistency",
+      "target": "file_query.py",
+      "relation": "affects",
+      "confidence": "EXTRACTED"
+    },
+    {
+      "source": "async_consistency",
+      "target": "file_brain_server.py",
+      "relation": "affects",
+      "confidence": "EXTRACTED"
+    }
+  ],
+  "metadata": {
+    "title": "ZeroCostBrain Code Improvements",
+    "total_improvements": 8,
+    "total_files_affected": 8
+  }
+}
