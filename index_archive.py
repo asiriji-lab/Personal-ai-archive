@@ -213,7 +213,10 @@ async def index_single_file(file_path: Path) -> None:
     Called by validate_and_archive.py; the existing CLI uses the batch indexer below.
     """
     rag = await get_rag()
-    await rag.initialize_storages()
+    try:
+        await rag.initialize_storages()
+    except ConnectionError as e:
+        raise RuntimeError(f"Cannot connect to Ollama: {e}")
 
     fp = str(file_path)
     fh = file_hash(fp)

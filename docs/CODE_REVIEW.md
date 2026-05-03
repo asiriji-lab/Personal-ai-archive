@@ -25,7 +25,7 @@ Changed from `asyncio.Lock` to `threading.Lock`. The lock is now actually used f
 
 ## CRITICAL — Will Break or Already Broken
 
-### 8. `index_archive.py` — Exception handler that never fires
+### 8. ~~`index_archive.py` — Exception handler that never fires~~ ✅ Fixed
 
 ```python
 try:
@@ -43,9 +43,9 @@ except ConnectionError as e:   # ← LightRAG() doesn't make network calls
 
 ## Security
 
-### 5. `.env` — Live API key in plaintext file
+### 5. ~~`.env` — Live API key in plaintext file~~ ✅ Fixed
 
-Yes, `.env` is in `.gitignore`. But the key is sitting in a plaintext file. Rotate it in Google Cloud Console if you haven't — 60 seconds, zero cost.
+Yes, `.env` is in `.gitignore`. But the key is sitting in a plaintext file. Rotate it in Google Cloud Console if you haven't — 60 seconds, zero cost. (Rotated by user).
 
 ---
 
@@ -125,7 +125,7 @@ DELETE FROM vec_chunks WHERE rowid IN (SELECT id FROM chunks WHERE path = ?)
 | Severity | Total | Fixed | Remaining |
 |---|---|---|---|
 | Critical | 4 | 4 (#1 event loop, #2 lock type, #4 reset, #8 ConnectionError → fixed in Phase 3) | **0** |
-| Security | 2 | 1 (shell=False) | 1 (API key rotation — user action) |
+| Security | 2 | 2 (shell=False, #5 API key rotated) | **0** |
 | Architecture | 2 | 2 (#7 two chunkers — **fully resolved**: `embed.py` now uses `utils.chunk_text()` as confirmed in code) | **0** |
 | Bugs | 4 | 4 (#10 TUI scripts, #11 chunk count, #12 N+1 deletes, #13 news_ingest manifest — all fixed) | **0** |
 | Missing deps | 1 file, 3 packages | 1 (requirements.txt updated: removed `matplotlib`, added `pyyaml`, `pyvis`, `psutil`) | 0 |
