@@ -31,8 +31,11 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from config import (
-    VAULT_PATH, ARCHIVE_PATH, OLLAMA_HOST,
-    GEMINI_API_KEY, GEMINI_MODEL,
+    ARCHIVE_PATH,
+    GEMINI_API_KEY,
+    GEMINI_MODEL,
+    OLLAMA_HOST,
+    VAULT_PATH,
 )
 from utils import sanitize_filename
 
