@@ -8,6 +8,9 @@ __pycache__/
 *.pyo
 *.pyd
 *.egg-info/
+*.egg
+dist/
+build/
 .venv/
 .pytest_cache/
 .coverage
@@ -32,6 +35,10 @@ docs/brain_graph.html
 docs/architecture_*.html
 eval/failures.json
 
+# Large binary artifacts — never commit personal data
+knowledge_base.zip
+*.zip
+
 # IDE
 .vscode/*
 !.vscode/launch.json
@@ -42,10 +49,22 @@ eval/failures.json
 *.swp
 *.swo
 
-# Project Specific
+# OS
+Thumbs.db
+.DS_Store
+desktop.ini
+
+# Agent / tool state
 .claude/
+.gemini/
 .obsidian/
+
+# Project Specific
 knowledge_base/
+!knowledge_base/README.md
+!knowledge_base/*/.gitkeep
 autoresearchclaw/
 IgnoreMe.md
+Untitled.md
 artifacts/
+.improvement_graph.json

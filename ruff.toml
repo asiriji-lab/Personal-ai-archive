@@ -1,0 +1,20 @@
+target-version = "py310"
+line-length = 120
+
+[lint]
+select = [
+    "E",    # pycodestyle errors
+    "F",    # pyflakes
+    "I",    # isort
+    "W",    # pycodestyle warnings
+]
+ignore = [
+    "E501",   # line too long (handled by formatter)
+    "E402",   # module level import not at top (common in scripts)
+    "F401",   # unused import (too noisy for now)
+    "E741",   # ambiguous variable name
+]
+
+[lint.per-file-ignores]
+"test_*.py" = ["E", "F"]
+"tests/*" = ["E", "F"]
