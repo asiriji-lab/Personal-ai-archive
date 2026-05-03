@@ -4,11 +4,18 @@
 </div>
 
 <p align="center">
+  <a href="https://github.com/asiriji-lab/Personal-ai-archive/actions/workflows/ci.yml"><img src="https://github.com/asiriji-lab/Personal-ai-archive/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
+  <img src="https://img.shields.io/badge/python-3.10%2B-blue" alt="Python 3.10+">
+</p>
+
+<p align="center">
   <a href="#features">Features</a> •
   <a href="#architecture">Architecture</a> •
   <a href="#prerequisites">Prerequisites</a> •
   <a href="#installation">Installation</a> •
-  <a href="#usage">Usage</a>
+  <a href="#usage">Usage</a> •
+  <a href="CONTRIBUTING.md">Contributing</a>
 </p>
 
 ---
@@ -144,8 +151,9 @@ python brain_explorer.py
 - `query.py` — Core logic for executing hybrid semantic searches.
 - `embed.py` — Embedding generation and manifest management.
 
-### 🔬 Validation Pipeline
+### 🔬 Validation & Maintenance
 - `scripts/validate_and_archive.py` — Claim extraction, Ollama validation, review queue, archive handoff, and LightRAG indexing trigger.
+- `scripts/prune_graph.py` — Utility to clean noisy entities and optimize knowledge graph latency.
 
 ### 🛠️ Dashboards & Visualization
 - `brain_tui.py` — Terminal-based dashboard for system monitoring.
@@ -161,6 +169,7 @@ python brain_explorer.py
 - `test_brain.py` — Interactive CLI for testing graph queries.
 - `test_llm_speed.py` — Benchmark tool for local LLM generation speed.
 - `eval/run_eval.py` — Evaluation suite for measuring retrieval accuracy.
+- `.github/workflows/ci.yml` — Automated regression testing matrix.
 
 ## 🔧 MCP Tools Reference
 
@@ -189,8 +198,11 @@ python brain_explorer.py
 ## 📖 Documentation
 
 - **[Installation & Setup](docs/setup_brain.md):** Detailed step-by-step guide.
-- **[Development & Customization](docs/customization.md):** How to modify the brain, add MCP tools, and optimize performance.
-- **[Validation Harness Spec](docs/validation-harness.txt):** Full specification for the claims validation pipeline.
+- **[System Architecture](docs/System_Architecture.md):** Module map and file structure.
+- **[System Connectivity](docs/system_connectivity.md):** Technical relationship and data flow map.
+- **[Validation Harness Spec](docs/validation-harness.md):** Full specification for the claims validation pipeline (with known implementation deviations).
+- **[Sprint Log](docs/SPRINT_LOG.md):** Research sprint history and upcoming sprint plans.
+- **[Developer Log](docs/dev_log.md):** Full engineering log — bugs, root causes, fixes, hardware numbers.
 
 ---
 

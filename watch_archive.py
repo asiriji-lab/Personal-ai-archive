@@ -9,29 +9,25 @@ Usage:
     python watch_archive.py --debounce 30  # Custom debounce in seconds
 """
 
+import argparse
 import asyncio
 import logging
 import sys
 import threading
 import time
-import argparse
 from pathlib import Path
 
-from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
+from watchdog.observers import Observer
 
 from config import ARCHIVE_PATH, validate_paths
 from index_archive import index_archive
+from utils import setup_logging
 
 # ──────────────────────────────────────────────
 # LOGGING
 # ──────────────────────────────────────────────
-logging.basicConfig(
-    stream=sys.stderr,
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(message)s",
-    datefmt="%H:%M:%S",
-)
+setup_logging()
 logger = logging.getLogger(__name__)
 
 

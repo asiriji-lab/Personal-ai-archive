@@ -10,9 +10,9 @@ Features:
 """
 
 import asyncio
+import glob
 import hashlib
 import json
-import glob
 import logging
 import shutil
 import sys
@@ -20,29 +20,33 @@ import time
 from pathlib import Path
 
 from lightrag import LightRAG, QueryParam
-from lightrag.llm.ollama import ollama_model_complete
 from lightrag.llm.gemini import gemini_model_complete
+from lightrag.llm.ollama import ollama_model_complete
 from lightrag.utils import EmbeddingFunc
 
 from config import (
-    LLM_PROVIDER, GEMINI_API_KEY, GEMINI_MODEL,
-    LOCAL_LLM_MODEL, EMBED_MODEL, OLLAMA_HOST,
-    LOCAL_CONTEXT_WINDOW, ARCHIVE_PATH, WORKING_DIR,
-    CHUNK_MAX_CHARS, INDEX_MANIFEST_FILE,
-    INDEX_FAILURES_FILE, INDEX_MAX_RETRIES, INDEX_RETRY_BACKOFF,
+    ARCHIVE_PATH,
+    CHUNK_MAX_CHARS,
+    EMBED_MODEL,
+    GEMINI_API_KEY,
+    GEMINI_MODEL,
+    INDEX_FAILURES_FILE,
+    INDEX_MANIFEST_FILE,
+    INDEX_MAX_RETRIES,
+    INDEX_RETRY_BACKOFF,
+    LLM_PROVIDER,
+    LOCAL_CONTEXT_WINDOW,
+    LOCAL_LLM_MODEL,
+    OLLAMA_HOST,
+    WORKING_DIR,
     validate_paths,
 )
-from utils import chunk_text
+from utils import chunk_text, file_hash, setup_logging
 
 # ──────────────────────────────────────────────
 # LOGGING
 # ──────────────────────────────────────────────
-logging.basicConfig(
-    stream=sys.stderr,
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(message)s",
-    datefmt="%H:%M:%S",
-)
+setup_logging()
 logger = logging.getLogger(__name__)
 
 # ──────────────────────────────────────────────
@@ -87,20 +91,18 @@ def _save_failures(failures: dict) -> None:
     )
 
 
-def _file_hash(filepath: str) -> str:
-    """Fast MD5 hash of file contents."""
-    h = hashlib.md5()
-    with open(filepath, "rb") as f:
-        for block in iter(lambda: f.read(8192), b""):
-            h.update(block)
-    return h.hexdigest()
+
 
 
 # ──────────────────────────────────────────────
 # PROVIDER SETUP
 # ──────────────────────────────────────────────
+import functools
+
+
 def _make_timed_llm(func):
     """Wrap an LLM function to log duration and output size after every call."""
+    @functools.wraps(func)
     async def timed(*args, **kwargs):
         t0 = time.perf_counter()
         result = await func(*args, **kwargs)
@@ -141,8 +143,8 @@ def _setup_provider():
 # LOCAL EMBEDDING (always Ollama)
 # ──────────────────────────────────────────────
 async def _local_embed(texts):
-    import ollama
     import numpy as np
+    import ollama
     client = ollama.AsyncClient(host=OLLAMA_HOST)
     data = await client.embed(model=EMBED_MODEL, input=texts)
     return np.array(data["embeddings"])
@@ -152,20 +154,26 @@ async def _local_embed(texts):
 # RAG FACTORY (lazy initialization)
 # ──────────────────────────────────────────────
 _rag_instance = None
+_rag_lock = asyncio.Lock()
 
+def reset_rag():
+    global _rag_instance
+    _rag_instance = None
 
-def get_rag() -> LightRAG:
+async def get_rag() -> LightRAG:
     """
     Create or return the singleton LightRAG instance.
     Lazy-loaded so imports don't trigger side effects.
     """
     global _rag_instance
-    if _rag_instance is not None:
-        return _rag_instance
 
-    validate_paths()
-    WORKING_DIR.mkdir(parents=True, exist_ok=True)
-    provider = _setup_provider()
+    async with _rag_lock:
+        if _rag_instance is not None:
+            return _rag_instance
+
+        validate_paths()
+        WORKING_DIR.mkdir(parents=True, exist_ok=True)
+        provider = _setup_provider()
 
     try:
         logger.info(f"Using model: {provider['name']} | num_ctx: {LOCAL_CONTEXT_WINDOW}")
@@ -204,11 +212,11 @@ async def index_single_file(file_path: Path) -> None:
     Raises RuntimeError on failure after all retries.
     Called by validate_and_archive.py; the existing CLI uses the batch indexer below.
     """
-    rag = get_rag()
+    rag = await get_rag()
     await rag.initialize_storages()
 
     fp = str(file_path)
-    fh = _file_hash(fp)
+    fh = file_hash(fp)
 
     manifest = _load_manifest()
     failures = _load_failures()
@@ -275,7 +283,7 @@ async def _index_single_file(rag, file_path: str, max_retries: int = INDEX_MAX_R
 # ──────────────────────────────────────────────
 # INDEXER
 # ──────────────────────────────────────────────
-async def index_archive(force_reset: bool = False, retry_failed: bool = False):
+async def index_archive(force_reset: bool = False, retry_failed: bool = False) -> None:
     """
     Index markdown files from the Archives folder into LightRAG.
 
@@ -283,7 +291,6 @@ async def index_archive(force_reset: bool = False, retry_failed: bool = False):
         force_reset: If True, wipes WORKING_DIR and re-indexes everything from scratch.
         retry_failed: If True, only retry previously failed files.
     """
-    global _rag_instance
     from tqdm import tqdm
 
     if force_reset:
@@ -296,9 +303,9 @@ async def index_archive(force_reset: bool = False, retry_failed: bool = False):
                     shutil.rmtree(item)
             logger.info(f"  Cleared: {WORKING_DIR}")
         # Force get_rag() to build a fresh instance against the empty directory
-        _rag_instance = None
+        reset_rag()
 
-    rag = get_rag()
+    rag = await get_rag()
     try:
         await rag.initialize_storages()
     except ConnectionError as e:
@@ -314,7 +321,7 @@ async def index_archive(force_reset: bool = False, retry_failed: bool = False):
         pending = []
         for fp, info in failures.items():
             if Path(fp).exists():
-                pending.append((fp, _file_hash(fp)))
+                pending.append((fp, file_hash(fp)))
         logger.info(f"🔁 Retrying {len(pending)} previously failed files.")
     else:
         all_files = glob.glob(str(ARCHIVE_PATH / "**" / "*.md"), recursive=True)
@@ -322,7 +329,7 @@ async def index_archive(force_reset: bool = False, retry_failed: bool = False):
         # Determine which files are new or changed
         pending = []
         for fp in all_files:
-            fh = _file_hash(fp)
+            fh = file_hash(fp)
             if manifest.get(fp) != fh:
                 pending.append((fp, fh))
 
@@ -338,12 +345,12 @@ async def index_archive(force_reset: bool = False, retry_failed: bool = False):
     success_count = 0
     error_count = 0
 
-    for file_path, file_hash in tqdm(pending, desc="🧠 Indexing"):
+    for file_path, fh in tqdm(pending, desc="🧠 Indexing"):
         success, error_msg = await _index_single_file(rag, file_path)
 
         if success:
             # Mark as successfully indexed and save immediately
-            manifest[file_path] = file_hash
+            manifest[file_path] = fh
             _save_manifest(manifest)
 
             # Remove from failures if it was there
@@ -377,10 +384,13 @@ async def index_archive(force_reset: bool = False, retry_failed: bool = False):
 # ──────────────────────────────────────────────
 # QUERY
 # ──────────────────────────────────────────────
-async def test_query(query: str) -> str:
+async def query_archive(query: str) -> str:
     """Run a hybrid RAG query against the knowledge graph."""
-    rag = get_rag()
+    rag = await get_rag()
     return await rag.aquery(query, param=QueryParam(mode="hybrid"))
+
+# Deprecated alias — will be removed in a future version
+test_query = query_archive
 
 
 # ──────────────────────────────────────────────

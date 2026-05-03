@@ -44,6 +44,8 @@ If you have more VRAM (8GB+), you can switch to a larger model for better reason
 - **Hybrid Search:** `sqlite-vec` + FTS5 (Active Vault).
 - **Server:** [FastMCP](https://github.com/jlowin/fastmcp).
 - **UI:** [Textual](https://github.com/Textualize/textual).
+- **Validation:** `scripts/validate_and_archive.py` — 7-stage pipeline (claims → Ollama → queue → archive → index).
+- **Graph Maintenance:** `scripts/prune_graph.py` — removes noisy/isolated LightRAG entities to reduce latency.
 
 ---
 
@@ -61,14 +63,25 @@ The indexer (`index_archive.py`) is designed for long-running processes and resi
 
 ## 📥 Data Ingestion (Papers & News)
 
+There are three ingestion paths into `4. Archives/`:
+
+### Primary: AutoResearchClaw → Validation Harness (`validate_and_archive.py`)
+The main research ingestion path for AI-generated papers.
+- **Trigger:** `python scripts/validate_and_archive.py --artifact autoresearchclaw/artifacts/rc-<run-id>/`
+- **Flow:** Locates `paper_draft.md` → extracts claims → validates via Ollama → writes review queue → enriches paper → copies to `4. Archives/` → triggers LightRAG indexing
+- **Watch mode:** `--watch` polls `artifacts/` every 30s and processes new runs automatically
+- See [validation-harness.md](validation-harness.md) for full spec
+
 ### AI Papers (`fetch_papers.py`)
 - **Sources:** arXiv RSS + Hugging Face Daily Papers.
 - **Keyword Filter:** Controlled via `papers_config.yaml`. Only arXiv papers matching these keywords are saved; all HF Daily papers pass through.
 - **Dedup:** Uses `data/papers_manifest.json` to prevent duplicate ingestion of the same arXiv ID.
+- **Note:** Writes directly to `4. Archives/` — bypasses the validation harness.
 
 ### News Ingest (`news_ingest.py`)
-- **Sources:** Google News (AI, Tech, Finance), Lab Blogs (DeepMind, Meta, Qwen, Apple, Google Research).
+- **Sources:** Google News (AI, Tech, Finance), Lab Blogs (DeepMind, Meta, Qwen, Apple, Google Research), arXiv RSS.
 - **Logic:** Extracts summaries and creates clean Markdown files in `4. Archives/News_Ingest/`.
+- **Note:** Writes directly to `4. Archives/` — bypasses the validation harness.
 
 ---
 

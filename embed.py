@@ -16,19 +16,19 @@ Usage:
     python embed.py --reset   # drop and rebuild from scratch
 """
 
+import argparse
 import hashlib
 import json
 import re
 import sqlite3
 import struct
-import argparse
 import sys
 from pathlib import Path
 
 import ollama
 import sqlite_vec
 
-from config import VAULT_PATH, RESOURCES_PATH, EMBED_MODEL, OLLAMA_HOST
+from config import _SKELETON_DIRS, CHUNK_MAX_CHARS, EMBED_MODEL, OLLAMA_HOST, RESOURCES_PATH, VAULT_PATH
 
 # ──────────────────────────────────────────────
 # PATHS
@@ -39,16 +39,7 @@ SCHEMA_PATH = PROJECT_ROOT / "data" / "schema.sql"
 MANIFEST_PATH = PROJECT_ROOT / "data" / "embed_manifest.json"
 
 
-# ──────────────────────────────────────────────
-# MANIFEST (incremental indexing via file hashes)
-# ──────────────────────────────────────────────
-def _file_hash(filepath: Path) -> str:
-    """Fast MD5 hash of file contents."""
-    h = hashlib.md5()
-    with open(filepath, "rb") as f:
-        for block in iter(lambda: f.read(8192), b""):
-            h.update(block)
-    return h.hexdigest()
+from utils import chunk_text, file_hash
 
 
 def _load_manifest() -> dict[str, str]:
@@ -63,54 +54,38 @@ def _load_manifest() -> dict[str, str]:
 
 def _save_manifest(manifest: dict[str, str]) -> None:
     MANIFEST_PATH.parent.mkdir(parents=True, exist_ok=True)
-    MANIFEST_PATH.write_text(
+    # Atomic save to prevent corruption on interrupt
+    temp_path = MANIFEST_PATH.with_suffix('.tmp')
+    temp_path.write_text(
         json.dumps(manifest, indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
-
-
-# ──────────────────────────────────────────────
-# CHUNKING
-# ──────────────────────────────────────────────
-def chunk_markdown(text: str, max_words: int = 500) -> list[str]:
-    """Split markdown into paragraph-aligned chunks under max_words."""
-    paragraphs = re.split(r'\n\s*\n', text)
-    chunks: list[str] = []
-    current: list[str] = []
-    current_len = 0
-
-    for para in paragraphs:
-        para = para.strip()
-        if not para:
-            continue
-        para_len = len(para.split())
-        if current_len + para_len > max_words and current:
-            chunks.append("\n\n".join(current))
-            current = [para]
-            current_len = para_len
-        else:
-            current.append(para)
-            current_len += para_len
-
-    if current:
-        chunks.append("\n\n".join(current))
-
-    return chunks
-
+    temp_path.replace(MANIFEST_PATH)
 
 # ──────────────────────────────────────────────
 # EMBEDDING
 # ──────────────────────────────────────────────
-def get_embedding(text: str) -> list[float]:
-    """Get embedding vector from Ollama. Returns a flat list of floats."""
+def get_embeddings(texts: list[str]) -> list[list[float]]:
+    """Get embedding vectors from Ollama in batch. Returns a list of flat lists of floats."""
+    if not texts:
+        return []
     try:
-        # ollama >= 0.2 API
-        resp = ollama.embed(model=EMBED_MODEL, input=text)
-        return resp["embeddings"][0]
+        # ollama >= 0.2 API supports batching
+        # To avoid exceeding context length on very large files, limit batch size
+        BATCH_SIZE = 16
+        all_embeddings = []
+        for i in range(0, len(texts), BATCH_SIZE):
+            batch = texts[i:i + BATCH_SIZE]
+            resp = ollama.embed(model=EMBED_MODEL, input=batch)
+            all_embeddings.extend(resp["embeddings"])
+        return all_embeddings
     except (AttributeError, KeyError):
-        # ollama < 0.2 fallback
-        resp = ollama.embeddings(model=EMBED_MODEL, prompt=text)
-        return resp["embedding"]
+        # fallback for older API without native batching
+        embs = []
+        for text in texts:
+            resp = ollama.embeddings(model=EMBED_MODEL, prompt=text)
+            embs.append(resp["embedding"])
+        return embs
 
 
 def pack_embedding(emb: list[float]) -> bytes:
@@ -185,12 +160,15 @@ def index_resources(reset: bool = False) -> None:
     conn = open_db(reset=reset)
     manifest = {} if reset else _load_manifest()
 
-    # Scan current files in Resources
-    md_files = sorted(RESOURCES_PATH.rglob("*.md"))
+    # Scan current files in all skeleton directories
+    md_files = []
+    for d in _SKELETON_DIRS:
+        md_files.extend(d.rglob("*.md"))
+    md_files = sorted(list(set(md_files)))
     current_files: dict[str, str] = {}  # rel_path -> hash
     for f in md_files:
         rel = f.relative_to(VAULT_PATH).as_posix()
-        current_files[rel] = _file_hash(f)
+        current_files[rel] = file_hash(f)
 
     # Classify: new, changed, deleted
     manifest_paths = set(manifest.keys())
@@ -247,31 +225,32 @@ def index_resources(reset: bool = False) -> None:
             _save_manifest(manifest)
             continue
 
-        chunks = chunk_markdown(text)
+        chunks = chunk_text(text, CHUNK_MAX_CHARS)
         embed_ok = True
         stored_count = 0
 
-        for idx, chunk in enumerate(chunks):
+        if chunks:
             try:
-                emb = get_embedding(chunk)
+                embeddings = get_embeddings(chunks)
             except Exception as e:
-                print(f"  EMBED ERROR chunk {idx} of {rel_path}: {e}", file=sys.stderr)
+                print(f"  EMBED ERROR in {rel_path}: {e}", file=sys.stderr)
                 embed_ok = False
-                continue
+                embeddings = []
 
-            cur = conn.execute(
-                "INSERT INTO chunks (path, chunk_index, content, embedder) VALUES (?, ?, ?, ?)",
-                (rel_path, idx, chunk, EMBED_MODEL),
-            )
-            chunk_id = cur.lastrowid
+            if embed_ok:
+                for idx, (chunk, emb) in enumerate(zip(chunks, embeddings)):
+                    cur = conn.execute(
+                        "INSERT INTO chunks (path, chunk_index, content, embedder) VALUES (?, ?, ?, ?)",
+                        (rel_path, idx, chunk, EMBED_MODEL),
+                    )
+                    chunk_id = cur.lastrowid
 
-            conn.execute(
-                "INSERT INTO vec_chunks (rowid, embedding) VALUES (?, ?)",
-                (chunk_id, pack_embedding(emb)),
-            )
-            stored_count += 1
-
-        conn.commit()
+                    conn.execute(
+                        "INSERT INTO vec_chunks (rowid, embedding) VALUES (?, ?)",
+                        (chunk_id, pack_embedding(emb)),
+                    )
+                    stored_count += 1
+                conn.commit()
 
         if embed_ok:
             manifest[rel_path] = current_files[rel_path]
@@ -287,7 +266,7 @@ def index_resources(reset: bool = False) -> None:
     conn.close()
     print(
         f"\nDone. {len(to_index)} indexed, {len(deleted_paths)} purged, "
-        f"{total_chunks} total chunks → {DB_PATH}"
+        f"{total_chunks} total chunks -> {DB_PATH}"
     )
 
 
@@ -297,6 +276,7 @@ def index_resources(reset: bool = False) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Index Resources into sqlite-vec.")
     parser.add_argument("--reset", action="store_true", help="Drop and rebuild index from scratch.")
+    parser.add_argument("--resume", action="store_true", help="Resume an interrupted indexing run (default behavior).")
     args = parser.parse_args()
 
     index_resources(reset=args.reset)

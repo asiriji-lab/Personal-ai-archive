@@ -4,10 +4,12 @@
 Reusable functions for sanitization, chunking, and system monitoring.
 """
 
+import hashlib
+import logging
 import os
 import re
 import subprocess
-
+import sys
 
 # ──────────────────────────────────────────────
 # FILENAME SANITIZATION
@@ -36,7 +38,7 @@ def sanitize_filename(title: str) -> str:
 # ──────────────────────────────────────────────
 # TEXT CHUNKING
 # ──────────────────────────────────────────────
-def chunk_text(text: str, max_chars: int = 4000) -> list[str]:
+def chunk_text(text: str, max_chars: int = 1500) -> list[str]:
     """
     Split text into chunks of approximately `max_chars` characters.
     Splits on paragraph boundaries (double newline) when possible,
@@ -59,12 +61,19 @@ def chunk_text(text: str, max_chars: int = 4000) -> list[str]:
         if len(para) > max_chars:
             sentences = re.split(r'(?<=[.!?])\s+', para)
             for sentence in sentences:
-                if len(current_chunk) + len(sentence) + 1 > max_chars:
+                if len(sentence) > max_chars:
                     if current_chunk:
                         chunks.append(current_chunk.strip())
-                    current_chunk = sentence
+                        current_chunk = ""
+                    for i in range(0, len(sentence), max_chars):
+                        chunks.append(sentence[i:i+max_chars])
                 else:
-                    current_chunk += " " + sentence if current_chunk else sentence
+                    if len(current_chunk) + len(sentence) + 1 > max_chars:
+                        if current_chunk:
+                            chunks.append(current_chunk.strip())
+                        current_chunk = sentence
+                    else:
+                        current_chunk += " " + sentence if current_chunk else sentence
         else:
             current_chunk += "\n\n" + para if current_chunk else para
 
@@ -77,22 +86,34 @@ def chunk_text(text: str, max_chars: int = 4000) -> list[str]:
 # ──────────────────────────────────────────────
 # GPU MONITORING
 # ──────────────────────────────────────────────
+import time
+
+_gpu_cache = {"data": None, "ts": 0.0}
+GPU_CACHE_TTL = 3.0
+
 def get_gpu_stats() -> dict:
     """
     Query nvidia-smi for GPU memory and utilization.
     Returns a dict with 'used_mb', 'total_mb', 'utilization', 'display'.
     Returns None values on failure.
     """
+    now = time.monotonic()
+    if _gpu_cache["data"] is not None and (now - _gpu_cache["ts"]) < GPU_CACHE_TTL:
+        return _gpu_cache["data"]
+
     try:
         cmd = ["nvidia-smi", "--query-gpu=memory.used,memory.total,utilization.gpu", "--format=csv,noheader,nounits"]
         output = subprocess.check_output(cmd, shell=False, timeout=5).decode().strip()
         used, total, util = output.split(", ")
-        return {
+        result = {
             "used_mb": int(used),
             "total_mb": int(total),
             "utilization": int(util),
             "display": f"{used}MB / {total}MB ({util}% Load)"
         }
+        _gpu_cache["data"] = result
+        _gpu_cache["ts"] = now
+        return result
     except (subprocess.SubprocessError, FileNotFoundError, ValueError):
         return {
             "used_mb": None,
@@ -101,3 +122,26 @@ def get_gpu_stats() -> dict:
             "display": "GPU Offline"
         }
 
+# ──────────────────────────────────────────────
+# SYSTEM UTILITIES
+# ──────────────────────────────────────────────
+def file_hash(path: str) -> str:
+    """Fast MD5 hash of file contents."""
+    h = hashlib.md5()
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(8192), b""):
+            h.update(block)
+    return h.hexdigest()
+
+_logging_initialized = False
+def setup_logging(level=logging.INFO):
+    global _logging_initialized
+    if _logging_initialized:
+        return
+    logging.basicConfig(
+        stream=sys.stderr,
+        level=level,
+        format="%(asctime)s | %(levelname)s | %(message)s",
+        datefmt="%H:%M:%S",
+    )
+    _logging_initialized = True

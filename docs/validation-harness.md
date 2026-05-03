@@ -1,6 +1,20 @@
-ZeroCostBrain — Validation Harness Specification
-=================================================
-Version: 1.0  |  Status: Draft  |  Date: 2026-04-29
+# ZeroCostBrain — Validation Harness Specification
+
+> **Version:** 1.0 | **Status:** Implemented | **Spec Date:** 2026-04-29 | **Last audited:** 2026-05-04
+
+## ⚠️ Known Deviations from This Spec (Applied During Implementation)
+
+These bugs were found during live testing (`docs/dev_log.md` — Validation Harness Bugs section). The implementation diverges from the spec in the following ways:
+
+| Bug | Spec Says | Reality | Fix Applied |
+|-----|-----------|---------|-------------|
+| **V1** — Artifact path | `paper_draft.md` at artifact root | AutoResearchClaw puts it in `stage-17/` | `locate_artifacts` checks root first, then `stage-17/` as fallback |
+| **V2** — Section regex | `/^#{1,3}\s*conclusion/i` | AutoResearchClaw uses numbered headings: `## 10. Conclusion` | Regex updated to `/^#{1,3}\s*(\d+\.\s*)?conclusion/i` (and same for abstract) |
+| **V3** — Gemini model | `gemini-1.5-flash` (original spec default) | Model deprecated, returns 404 | **Resolved at source:** `config.py` default is now `gemini-2.0-flash`. No `.env` override required unless you want a different model. |
+
+---
+
+
 
 OVERVIEW
 --------

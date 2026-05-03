@@ -1,61 +1,70 @@
-# Two‑Tier Virtual Brain: Active + Archive Architecture
+# Two-Tier Virtual Brain — Vision & Design Rationale
+
+> **Status:** System is built and running. This document explains WHY the design decisions were made, not what to do next.
+> For current status and bug history, see `dev_log.md`. For sprint tracking, see `SPRINT_LOG.md`.
+
+---
 
 ## Core Goal
-Build a personal knowledge system that acts like a human brain: a fast, lightweight **Active Brain** for daily thinking and note‑taking, and a deep, queryable **Archive Brain** for long‑term memory and cross‑field discovery. The entire system must run **locally with zero API costs**, preserve **privacy**, and be **modular** for future AI agents.
 
-## The Two Tiers
+A personal knowledge system that acts like a human brain: a fast, lightweight **Active Brain** for daily thinking and note-taking, and a deep, queryable **Archive Brain** for long-term memory and cross-field discovery.
 
-### Active Brain (Obsidian Vault)
-- **Role**: Fast, daily decision‑making, note creation, and human review.
-- **Content**: Maps of Content (MOCs), fleeting notes, active project notes.
-- **Organization**: PARA (Projects, Areas, Resources, Archives) + Zettelkasten (atomic, linked notes).
-- **Interface**: Human uses Obsidian directly; AI agents can read/write via an MCP server.
+**Three non-negotiable constraints:**
+1. **Zero recurring cost** — no API keys, no cloud services.
+2. **All data on local machine** — privacy absolute.
+3. **Low latency** — retrieval target <2 seconds.
 
-### Archive Brain (LightRAG + RAG‑Anything)
-- **Role**: Long‑term storage, semantic search, and discovery of non‑obvious connections.
-- **Content**: All historical notes, raw data, parsed financial documents, past failures/successes.
-- **Engine**: 
-  - **LightRAG** provides hybrid search (BM25 + vector embeddings + knowledge graph) and is 10x faster than GraphRAG.
-  - **RAG‑Anything** parses multimodal inputs (PDFs, news, charts, images) into structured data.
-- **Access**: AI agents query LightRAG via MCP; results are summarized and pushed to Active Brain.
+---
 
-## Bridge Between Tiers: MCP Server + Local LLM
-- **MCP (Model Context Protocol) server** acts as a standardized API for all tools.
-- **Local LLM (Ollama + small model like Qwen 2.5 7B or Llama 3.2 3B)** handles “dirty work”: query rewriting, summarization, drafting notes, reranking search results.
-- **Cost**: Zero API credits. All models run on local CPU/GPU.
+## The Two Tiers (Why This Architecture)
 
-## Retrieval Pipeline (Ensuring Relevance)
-1. **Query understanding** (local LLM or simple keyword extraction).
-2. **Three parallel retrieval channels**: keyword (BM25), vector (semantic), graph (neighbors).
-3. **Hybrid fusion** (Reciprocal Rank Fusion) + optional local reranking (cross‑encoder).
-4. **Active Brain filtering**: MOCs boost relevant notes.
-5. **Meta‑Cognition Agent** (local LLM) refines failed queries.
+### Active Brain (Obsidian + SQLite-vec)
+- **Why Obsidian:** The only interface the user touches daily. PARA organization maps directly to how humans think about projects. Zettelkasten atomic notes are the right granularity for LLM retrieval.
+- **Why SQLite-vec:** Zero infrastructure. Runs in-process. Good enough for Tier 1 (vault notes are small, dense, and frequently changing).
+- **Why BM25 + vector + RRF:** Neither BM25 nor pure vector search is reliably better alone. RRF fusion is deterministic, requires no training, and consistently outperforms either alone for this use case.
 
-## Key Design Decisions (Already Made)
-- Use LightRAG instead of a raw vector database.
-- Use RAG‑Anything for document parsing.
-- Build a custom MCP server with local LLM for retrieval and drafting.
-- Handle contradictory research via confidence‑weighted voting, regime detection, and human‑in‑the‑loop.
-- Obsidian is the **only** user interface; AI agents are background assistants.
+### Archive Brain (LightRAG)
+- **Why LightRAG over raw vector DB:** Graph traversal finds connections you didn't know to ask for. Named entity queries (e.g., "everything about cross-encoder reranking") work correctly because the graph preserves relationships between entities, not just proximity in embedding space.
+- **Why nomic-embed-text (768-dim) over bge-m3 (1024-dim):** Fits in RAM, runs fast on CPU, sufficient quality. The 768-dim model was chosen after Bug 4 (LightRAG hardcodes 1024-dim in `ollama_embed`). See `Known_Bugs_and_Fixes.md`.
+- **Why Qwen 3.5:4b over larger models:** The only local model that fits in 6GB VRAM with room for KV cache. Q4_K_M quantization = 3.4GB. 7B+ models swap to CPU, destroying throughput.
 
-## Current Constraints
-- Zero recurring cost (no API keys).
-- All data stays on local machine.
-- Low latency for retrieval (target <2s).
-- Human reviews all significant decisions (trading or critical insights).
+---
 
-## Open Questions (Not Yet Solved)
-- Optimal pruning strategy for the Archive Brain as it grows.
-- How to automatically generate/update MOCs from LightRAG insights.
-- Best local reranking model for zero‑cost retrieval.
-- Whether the system can be extended to automated trading (currently focused on portfolio management with human oversight).
+## The Self-Improvement Loop (The Core Insight)
 
-## Next Steps (What We Are About to Do)
-1. Install Ollama and pull a small model (e.g., `qwen2.5:7b`).
-2. Set up LightRAG to index the Obsidian vault.
-3. Build a minimal MCP server with tools: `search_notes`, `draft_note`, `get_session_context`.
-4. Test hybrid retrieval with local embeddings.
-5. Iterate based on retrieval quality.
+The system is not just a knowledge store — it is designed to research its own improvement:
 
-## How You Can Help
-You are now another LLM being given this context. Please read it carefully. I will then ask you to help me with a specific part of the implementation (e.g., writing the MCP server code, designing a MOC generation script, or debugging retrieval quality). Do not assume anything outside this description. Ask clarifying questions if needed.
+```
+Open question → AutoResearchClaw → Paper → Validate → Archive → LightRAG index → Better answers → Implement → New question
+```
+
+Each sprint uses the brain to research how to make the brain better. Sprint 1 researched reranking → findings feed into `query.py`. Sprint 2 will research graph pruning → findings feed into `index_archive.py`.
+
+---
+
+## Key Design Decisions (Locked In)
+
+| Decision | Why | Alternatives Rejected |
+|----------|-----|----------------------|
+| LightRAG for archive | Graph traversal for named entities | Raw vector DB — no relationship traversal |
+| SQLite-vec for vault | Zero infrastructure | Chroma, Weaviate — overkill for local use |
+| Custom MCP server | Standard protocol for agent integration | Direct function calls — not portable |
+| Chunk at 1500 chars | Hardware-derived from RTX 4050 at 15 tok/s | 4000 chars → timeouts (Bug 5) |
+| Qwen 3.5:4b-brain | Custom model, thinking OFF | Base model → indexing impossible (Bug 7) |
+| Obsidian as sole UI | Human-in-the-loop by design | Custom UI — unnecessary complexity |
+
+---
+
+## Open Questions (Still Unresolved as of 2026-05-04)
+
+| Question | Sprint Targeting It |
+|----------|-------------------|
+| Optimal automated pruning strategy as graph scales | Sprint 2 |
+| How to auto-generate/update MOCs from LightRAG entities | Sprint 3 |
+| Best local reranking model for zero-cost retrieval | Sprint 1 findings → Sprint 2 pre-work |
+| Whether system can extend to automated trading | Sprint 4 (scope TBD) |
+
+---
+
+*This document is design rationale, not a how-to guide.*
+*Setup: `docs/setup_brain.md` | Engineering log: `docs/dev_log.md` | Sprint tracking: `docs/SPRINT_LOG.md`*

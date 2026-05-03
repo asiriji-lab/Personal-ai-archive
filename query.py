@@ -21,7 +21,7 @@ from config import EMBED_MODEL
 PROJECT_ROOT = Path(__file__).parent
 DB_PATH = PROJECT_ROOT / "data" / "index.db"
 TOPK = 10
-CANDIDATE_K = 20  # over-retrieve before RRF, then trim to TOPK
+CANDIDATE_K = 10  # over-retrieve before RRF, then trim to TOPK
 
 
 # ──────────────────────────────────────────────
@@ -29,7 +29,7 @@ CANDIDATE_K = 20  # over-retrieve before RRF, then trim to TOPK
 # ──────────────────────────────────────────────
 def open_db() -> sqlite3.Connection:
     if not DB_PATH.exists():
-        print(f"ERROR: index.db not found. Run embed.py first.", file=sys.stderr)
+        print("ERROR: index.db not found. Run embed.py first.", file=sys.stderr)
         sys.exit(1)
 
     conn = sqlite3.connect(DB_PATH)

@@ -1,4 +1,6 @@
-import requests, time
+import time
+
+import requests
 
 s = time.time()
 r = requests.post(

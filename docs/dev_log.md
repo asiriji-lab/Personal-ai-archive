@@ -1,7 +1,7 @@
 # ZeroCostBrain — Developer Log
 
 > For the next AI, the next human, or whoever is crazy enough to read this.
-> Written after Sprint 1. Last updated: 2026-04-30.
+> Written after Sprint 1. Last updated: 2026-05-03.
 
 ---
 
@@ -80,7 +80,7 @@ After a sprint completes, the deliverables (`paper_final.md`, `paper.tex`, `refe
 ```powershell
 python scripts/validate_and_archive.py --artifact autoresearchclaw/artifacts/rc-<run-id>/
 ```
-This extracts claims, validates them via Ollama (qwen3.5:4b), writes `knowledge_base/system/review-queue.jsonl`, enriches the paper with a `validation_summary:` frontmatter block, copies it to `4. Archives/`, and triggers incremental LightRAG indexing automatically. See `docs/validation-harness.txt` for the full spec.
+This extracts claims, validates them via Ollama (qwen3.5:4b), writes `knowledge_base/system/review-queue.jsonl`, enriches the paper with a `validation_summary:` frontmatter block, copies it to `4. Archives/`, and triggers incremental LightRAG indexing automatically. See `docs/validation-harness.md` for the full spec.
 
 **Sprint 1 topic**: Survey of cross-encoder reranking for hybrid BM25 + dense retrieval on CPU with sub-2-second latency. This directly feeds back into improving `query.py`.
 
@@ -563,6 +563,42 @@ total_chunks += stored_count  # was: += len(chunks)
 
 ---
 
+---
+
+## Phase 3 Strategic Remediation Sprint — 2026-05-03
+
+Full audit and remediation focused on Phase 3: System stability, safety, and Tier 2 latency optimization.
+
+### Fix 1 — `scripts/prune_graph.py`: Graph Pruning Utility
+**Problem**: The LightRAG graph had accumulated noisy entities (orphaned nodes, dates, isolated symbols) causing Tier 2 latency spikes and lower precision.
+**Fix**: Implemented a standalone script to identify and soft-delete low-value nodes (degree=0, numeric-only, length<2). Removed 1,154 entities (~24% graph reduction).
+
+### Fix 2 — `embed.py`: Resumable Indexing & Safety
+**Problem**: Large indexing runs could fail midway, and there was no way to resume without restarting the whole batch. Context overflows could also happen when passing multiple chunks.
+**Fix**: Upgraded `embed.py` with an explicit `--resume` flag, atomic manifest saving, and internal batch-limited embedding.
+
+### Fix 3 — `query.py`: Tuned `CANDIDATE_K`
+**Problem**: `CANDIDATE_K` was set to 20, causing unnecessary context overhead without significantly improving Recall@10.
+**Fix**: Reduced `CANDIDATE_K` from 20 down to 10 based on evaluation results, maintaining `0.800` Recall@10 while lowering latency.
+
+### Fix 4 — `utils.py`: Hard Chunking Limits
+**Problem**: Exceptionally long sentences were bypassing the chunk size limits, causing context window overflows in the embedding model.
+**Fix**: Hardened `chunk_text()` to force-split strings strictly at `max_chars` (default reduced to 1500) to protect LLM context windows.
+
+### Fix 5 — `index_archive.py`: Async Refactor Bugs
+**Problem**: The async refactor left synchronous calls to `get_rag()` that crashed on execution, variable shadowing issues, and an incomplete `--reset` implementation.
+**Fix**: Applied comprehensive patches identified in the audit log to `index_archive.py`, fixing `await get_rag()` usage and utilizing `reset_rag()`.
+
+### Fix 6 — `brain_server.py`: Path Traversal Safety
+**Problem**: Agent-driven save actions were vulnerable to path traversal attacks.
+**Fix**: Implemented an `is_safe_path()` utility to strictly enforce boundary policies, limiting saves to the correct vault directories.
+
+### Fix 7 — CI/CD Pipeline
+**Problem**: Regressions were hard to catch locally across platforms.
+**Fix**: Created `.github/workflows/ci.yml` to automate testing on `ubuntu-latest` and `windows-latest`.
+
+---
+
 ## Performance Numbers (Measured)
 
 | Setting | Value |
@@ -593,16 +629,18 @@ nvidia-smi -lms 100 --query-gpu=timestamp,temperature.gpu,clocks.gr,utilization.
 
 ## What Works Right Now
 
-- [x] Tier 1: `embed.py` indexes the full Obsidian vault into `data/index.db` (BM25 + vector)
-- [x] Tier 1: `query.py` does hybrid BM25 + vector + RRF search
+- [x] Tier 1: `embed.py` indexes the full Obsidian vault into `data/index.db` (BM25 + vector) (Resumable)
+- [x] Tier 1: `query.py` does hybrid BM25 + vector + RRF search (Optimized Candidates)
 - [x] Tier 2: `index_archive.py` indexes Archives into LightRAG knowledge graph (after fixes above)
-- [x] `brain_server.py` exposes MCP tools to Claude / Cursor
+- [x] Tier 2: `scripts/prune_graph.py` removes noisy entities, optimizing latency.
+- [x] `brain_server.py` exposes MCP tools to Claude / Cursor (Path Boundary Enforced)
 - [x] `eval/run_eval.py` measures Recall@10 across stratified queries
 - [x] AutoResearchClaw Sprint 1 completed: cross-encoder reranking survey paper generated
 - [x] Self-improvement loop defined: research → paper → archive → graph → implement
 - [x] Validation harness: `scripts/validate_and_archive.py` — claims extraction, Ollama validation, review queue, archive enrichment, auto-indexing (2026-04-29)
 - [x] `brain_server.py`: `review_queue` MCP tool — returns queue contents filtered by status/verdict (2026-04-29)
 - [x] `index_archive.py`: `index_single_file(path)` public API extracted for single-file indexing (2026-04-29)
+- [x] Automated testing: GitHub Actions matrix for Ubuntu/Windows regression testing.
 
 ## What Is Not Done Yet
 

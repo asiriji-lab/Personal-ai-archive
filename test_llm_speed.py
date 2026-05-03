@@ -14,10 +14,10 @@ Expected output if thinking is ON:   > 120s, < 3 tok/s
 import asyncio
 import time
 
-import ollama
 import numpy as np
+import ollama
 
-from config import LOCAL_LLM_MODEL, LOCAL_CONTEXT_WINDOW, OLLAMA_HOST
+from config import LOCAL_CONTEXT_WINDOW, LOCAL_LLM_MODEL, OLLAMA_HOST
 
 # Same prompt shape LightRAG uses for entity extraction
 TEST_PROMPT = (

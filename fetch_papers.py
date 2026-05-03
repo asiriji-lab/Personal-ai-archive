@@ -264,7 +264,7 @@ def fetch_papers(dry_run: bool = False, skip_arxiv: bool = False, skip_hf: bool 
 
     # ── Source 2: Hugging Face Daily Papers ───
     if not skip_hf:
-        print(f"\nHugging Face Daily Papers...")
+        print("\nHugging Face Daily Papers...")
         hf_papers = _fetch_hf_daily_papers()
         added = 0
         for p in hf_papers:
@@ -274,7 +274,7 @@ def fetch_papers(dry_run: bool = False, skip_arxiv: bool = False, skip_hf: bool 
         print(f"  {len(hf_papers)} fetched, {added} new (not already in arXiv batch)")
 
     print(f"\nTotal unique candidates: {len(all_papers)}")
-    print(f"Filtering arXiv by keywords, keeping all HF Daily...\n")
+    print("Filtering arXiv by keywords, keeping all HF Daily...\n")
 
     total_new = 0
     total_skipped = 0

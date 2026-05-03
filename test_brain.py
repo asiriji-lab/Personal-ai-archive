@@ -6,9 +6,9 @@ Verifies that RAG initialization, embedding, and hybrid search all work end-to-e
 """
 
 import asyncio
-import sys
-import os
 import logging
+import os
+import sys
 
 # ── Quieten noisy LightRAG internals ──
 logging.basicConfig(level=logging.INFO, format="%(message)s")

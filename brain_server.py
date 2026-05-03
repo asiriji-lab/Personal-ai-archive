@@ -11,29 +11,24 @@ Tools provided:
   - brain_status()           — Health check (indexed docs, GPU, provider)
 """
 
-import sys
-import os
 import json
 import logging
+import os
+import sys
 from contextlib import asynccontextmanager
 
 from fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 
-from config import RESOURCES_PATH, WORKING_DIR, LLM_PROVIDER, validate_paths
-from utils import sanitize_filename, get_gpu_stats
-from index_archive import get_rag, test_query
+from config import LLM_PROVIDER, RESOURCES_PATH, WORKING_DIR, is_safe_path, validate_paths
+from index_archive import get_rag, query_archive, test_query
 from query import search as hybrid_search
+from utils import get_gpu_stats, sanitize_filename, setup_logging
 
 # ──────────────────────────────────────────────
 # LOGGING
 # ──────────────────────────────────────────────
-logging.basicConfig(
-    stream=sys.stderr,
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(message)s",
-    datefmt="%H:%M:%S",
-)
+setup_logging()
 logger = logging.getLogger(__name__)
 
 # ──────────────────────────────────────────────
@@ -58,6 +53,10 @@ async def lifespan(server):
 # ──────────────────────────────────────────────
 mcp = FastMCP("BrainBridge", lifespan=lifespan)
 
+# ──────────────────────────────────────────────
+# TOOLS (MCP Endpoints)
+# ──────────────────────────────────────────────
+# Convention: Use `async def` and `asyncio.to_thread` for CPU/I-O bound blocking functions.
 
 _MAX_QUERY_LEN = 2000
 _MAX_NOTE_BYTES = 100_000  # 100 KB
@@ -71,7 +70,7 @@ async def archive_search(query: str) -> str:
     if len(query) > _MAX_QUERY_LEN:
         return f"Error: Query exceeds {_MAX_QUERY_LEN} character limit."
     try:
-        result = await test_query(query.strip())
+        result = await query_archive(query.strip())
         return result
     except Exception as e:
         logger.error(f"archive_search failed: {e}")
@@ -79,14 +78,15 @@ async def archive_search(query: str) -> str:
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, idempotentHint=True))
-def vault_search(query: str) -> str:
+async def vault_search(query: str) -> str:
     """Fast hybrid search (vector + BM25 + RRF) over the full vault index. Best for exact recall and keyword queries."""
     if not query or not query.strip():
         return "Error: Query cannot be empty."
     if len(query) > _MAX_QUERY_LEN:
         return f"Error: Query exceeds {_MAX_QUERY_LEN} character limit."
     try:
-        results = hybrid_search(query.strip())
+        import asyncio
+        results = await asyncio.to_thread(hybrid_search, query.strip())
         if not results:
             return json.dumps({"query": query, "results": [], "message": "No results found."})
         # Return top 5 with path, chunk, and a content preview
@@ -122,6 +122,11 @@ def save_active_note(title: str, content: str) -> str:
     try:
         RESOURCES_PATH.mkdir(parents=True, exist_ok=True)
         filepath = RESOURCES_PATH / f"{safe_title}.md"
+
+        # Phase 3: Explicit path boundary enforcement
+        if not is_safe_path(filepath, RESOURCES_PATH):
+            return f"Error: Path boundary violation. Cannot save to {filepath}."
+
         filepath.write_text(content, encoding="utf-8")
         logger.info(f"📝 Saved note: {safe_title}.md")
         return f"Successfully saved '{safe_title}' to Resources."
@@ -181,13 +186,18 @@ def review_queue(status_filter: str = "all") -> str:
     if not queue_path.exists():
         return json.dumps({"entries": [], "message": "Queue is empty."})
 
+    REQUIRED_QUEUE_KEYS = {"timestamp", "status"}
     all_entries: list[dict] = []
     for line in queue_path.read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if not line:
             continue
         try:
-            all_entries.append(json.loads(line))
+            entry = json.loads(line)
+            if not REQUIRED_QUEUE_KEYS.issubset(entry):
+                logger.warning("review_queue: missing keys in entry, skipping")
+                continue
+            all_entries.append(entry)
         except json.JSONDecodeError:
             logger.warning(f"review_queue: skipping malformed line: {line[:80]}")
 

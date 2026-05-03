@@ -5,22 +5,22 @@ A terminal UI dashboard for monitoring GPU, vault statistics,
 and launching brain operations.
 """
 
+import glob
 import os
 import subprocess
 import sys
-import glob
 from datetime import datetime
 
+from rich import box
 from rich.console import Console
 from rich.layout import Layout
-from rich.panel import Panel
-from rich.table import Table
 from rich.live import Live
-from rich.text import Text
-from rich import box
+from rich.panel import Panel
 from rich.prompt import Prompt
+from rich.table import Table
+from rich.text import Text
 
-from config import VAULT_PATH, ARCHIVE_PATH, validate_paths
+from config import ARCHIVE_PATH, VAULT_PATH, validate_paths
 from utils import get_gpu_stats
 
 console = Console()

@@ -82,9 +82,11 @@ This folder is a complete VS Code workspace:
 | `python brain_tui.py` | Main cockpit — dashboard, vitals, launcher. |
 | `python embed.py` | Index `3. Resources/` into SQLite vector store (Tier 1). Run after adding notes. |
 | `python embed.py --reset` | Drop and rebuild the Tier 1 index from scratch. |
+| `python embed.py --resume` | Resume an interrupted indexing run. |
 | `python index_archive.py` | Index new/changed archive files (Incremental). |
 | `python index_archive.py --reset` | Full re-index from scratch. |
 | `python index_archive.py --retry-failed` | Retry only files that failed previous indexing. |
+| `python scripts/prune_graph.py` | Remove noisy or isolated entities from the knowledge graph to improve latency. |
 | `python brain_server.py` | Start MCP Bridge for AI agents. |
 | `python scripts/validate_and_archive.py --artifact <path>` | Validate and archive one AutoResearchClaw artifact. |
 | `python scripts/validate_and_archive.py --watch` | Watch `artifacts/` and process new runs automatically (30s poll). |
@@ -102,7 +104,7 @@ All configuration is in `config.py` with `.env` overrides:
 | `BRAIN_VAULT_PATH` | *(hardcoded fallback)* | Path to your Obsidian vault. |
 | `BRAIN_LLM_PROVIDER` | `LOCAL` | `LOCAL` (Ollama) or `GEMINI` (Cloud). |
 | `OLLAMA_HOST` | `http://localhost:11434` | Ollama server address. |
-| `BRAIN_LOCAL_MODEL` | `qwen3.5:4b` | Local LLM model name. |
+| `BRAIN_LOCAL_MODEL` | `qwen3.5:4b-brain` | Local LLM model name. Uses the custom brain model (thinking OFF, num_ctx=4096). |
 | `BRAIN_EMBED_MODEL` | `nomic-embed-text` | Embedding model name. |
 | `BRAIN_CONTEXT_WINDOW` | `4096` | Context window size (4096 is optimal for RTX 4050). |
 | `GOOGLE_API_KEY` | *(empty)* | Gemini API key (if using cloud). |
