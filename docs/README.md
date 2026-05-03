@@ -22,23 +22,27 @@ Every non-obvious bug with its root cause. Every design decision with its reason
 
 If something breaks, check `dev_log.md` before debugging blind. If you're continuing development, read the "For the Next Developer" section at the bottom.
 
-## 5. [system_connectivity.md](system_connectivity.md)
+## 5. [System_Architecture.md](System_Architecture.md)
+**Module map and file structure.**
+High-level overview of the components, their responsibilities, and how they relate.
+
+## 6. [system_connectivity.md](system_connectivity.md)
 **How all modules connect.**
 Verified Mermaid diagram of the full data flow — ingest → validation → indexing → retrieval → MCP tools. Includes the dual-brain retrieval model (two independent paths, not merged).
 
-## 6. [mcp_tools_reference.md](mcp_tools_reference.md)
+## 7. [mcp_tools_reference.md](mcp_tools_reference.md)
 **API reference for all 5 MCP tools.**
 Signatures, input limits, ToolAnnotations, and behavior for `vault_search`, `archive_search`, `save_active_note`, `brain_status`, and `review_queue`.
 
-## 7. [SPRINT_LOG.md](SPRINT_LOG.md)
+## 8. [SPRINT_LOG.md](SPRINT_LOG.md)
 **Sprint history and planned topics.**
 AutoResearchClaw sprint status, key findings, and action items feeding back into the codebase.
 
-## 8. [CODE_REVIEW.md](CODE_REVIEW.md)
+## 9. [CODE_REVIEW.md](CODE_REVIEW.md)
 **Bug audit and fix history.**
 9 bugs found in the original code review, tracked with severity and fix status. Updated after each remediation phase.
 
-## 9. [customization.md](customization.md)
+## 10. [customization.md](customization.md)
 **How to extend and modify the system.**
 Adding MCP tools, switching models, understanding the indexer's fault-tolerance, data ingestion pipelines.
 
