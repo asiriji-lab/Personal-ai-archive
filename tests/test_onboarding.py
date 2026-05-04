@@ -34,6 +34,12 @@ def test_docker_compose_syntax_is_valid():
     """
     root_dir = Path(__file__).parent.parent
     compose_path = root_dir / "docker-compose.yml"
+    env_file = root_dir / ".env"
+    created_env = False
+
+    if not env_file.exists():
+        env_file.touch()
+        created_env = True
 
     # Skip if docker isn't installed in the test environment
     try:
@@ -45,6 +51,9 @@ def test_docker_compose_syntax_is_valid():
             pytest.fail(f"Invalid docker-compose.yml: {result.stderr}")
     except FileNotFoundError:
         pytest.skip("Docker is not installed on this system, skipping syntax validation.")
+    finally:
+        if created_env:
+            env_file.unlink()
 
 
 def test_docker_compose_gpu_syntax_is_valid():
@@ -54,6 +63,12 @@ def test_docker_compose_gpu_syntax_is_valid():
     root_dir = Path(__file__).parent.parent
     compose_path = root_dir / "docker-compose.yml"
     gpu_compose_path = root_dir / "docker-compose.gpu.yml"
+    env_file = root_dir / ".env"
+    created_env = False
+
+    if not env_file.exists():
+        env_file.touch()
+        created_env = True
 
     try:
         result = subprocess.run(
@@ -65,6 +80,9 @@ def test_docker_compose_gpu_syntax_is_valid():
             pytest.fail(f"Invalid docker-compose override: {result.stderr}")
     except FileNotFoundError:
         pytest.skip("Docker is not installed on this system.")
+    finally:
+        if created_env:
+            env_file.unlink()
 
 
 def test_env_parsing_with_quotes(tmp_path, monkeypatch):
