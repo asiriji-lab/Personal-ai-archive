@@ -1,0 +1,44 @@
+version: '3.8'
+
+services:
+  zerocostbrain:
+    build: .
+    container_name: zerocostbrain_app
+    env_file:
+      - .env
+    environment:
+      # Override the OLLAMA_HOST to point to the linked ollama container
+      - OLLAMA_HOST=http://ollama:11434
+      # Explicitly override the vault path for container compatibility
+      - BRAIN_VAULT_PATH=/app/knowledge_base
+      - IS_DOCKER=true
+    volumes:
+      - ./knowledge_base:/app/knowledge_base
+    depends_on:
+      ollama:
+        condition: service_healthy
+    networks:
+      - brain_network
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: zerocostbrain_ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    networks:
+      - brain_network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:11434/api/tags || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+networks:
+  brain_network:
+    driver: bridge
+
+volumes:
+  ollama_data:

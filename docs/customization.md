@@ -19,12 +19,24 @@ This guide is for users and developers who want to modify, extend, or deeply und
 
 Most user-level customization is handled through the `.env` file. 
 
+> [!WARNING]
+> **Docker Overrides:** If you are using the Docker setup, the `docker-compose.yml` file explicitly overrides your host `.env` settings for `OLLAMA_HOST` (forces `http://ollama:11434`) and `BRAIN_VAULT_PATH` (forces `/app/knowledge_base`) to prevent path injection errors. Any changes you make to these two specific variables in your `.env` file will be ignored by the container.
+
+### Hardware Acceleration (Docker)
+By default, the Docker stack runs on the CPU. To enable NVIDIA GPU pass-through, you must use the GPU override file when launching:
+```bash
+docker-compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
+```
+
 ### Switching Models
 If you have more VRAM (8GB+), you can switch to a larger model for better reasoning:
 1. Open `.env`.
 2. Change `BRAIN_LOCAL_MODEL=qwen2.5:7b`.
 3. Increase `BRAIN_CONTEXT_WINDOW=32768` (or higher if VRAM allows).
-4. Restart the indexer or server.
+4. Restart the stack (if using Docker) or the indexer/server.
+
+### Test Mode
+If you are running CI or testing scripts, you can export `IS_TEST=true` in your environment to skip the 10-second exponential backoff connection ping to Ollama during the pre-flight checks.
 
 ---
 

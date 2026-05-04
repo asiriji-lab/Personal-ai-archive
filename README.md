@@ -71,47 +71,66 @@ graph TB
 - **Ollama:** Installed and running locally.
 - **Hardware:** Minimum 6GB VRAM (NVIDIA recommended).
 
-## 🚀 Installation
+## 🚀 5-Minute Quick Start
+
+You can run ZeroCostBrain natively or via Docker. The Docker approach is recommended for the simplest setup.
+
+### Option A: The Easy Way (Docker)
+This bundles everything you need, including Ollama and the Python environment.
 
 1. **Clone the repository:**
    ```bash
    git clone https://github.com/asiriji-lab/Personal-ai-archive.git
    cd Personal-ai-archive
    ```
-
-2. **Install Python dependencies:**
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-3. **Pull required local models via Ollama:**
-   ```bash
-   ollama pull qwen3.5:4b
-   ollama pull nomic-embed-text
-   ```
-
-4. **Configure environment:**
+2. **Configure your Vault path:**
    ```bash
    cp .env.example .env
-   # Edit .env to point VAULT_PATH and ARCHIVE_PATH at your Obsidian vault
+   # Edit .env and set BRAIN_VAULT_PATH to your Obsidian vault directory
    ```
+3. **Launch the stack:**
+   ```bash
+   docker-compose up -d
+   ```
+   *(Docker will automatically download the required Ollama models and start the brain server).*
+
+### Option B: The Native Way (Python)
+If you already have Python 3.10+ and Ollama installed:
+
+1. **Clone & Install Dependencies:**
+   ```bash
+   git clone https://github.com/asiriji-lab/Personal-ai-archive.git
+   cd Personal-ai-archive
+   pip install -r requirements.txt
+   ```
+2. **Configure Environment:**
+   ```bash
+   cp .env.example .env
+   # Edit .env and set BRAIN_VAULT_PATH
+   ```
+3. **Run Pre-Flight Validation (IMPORTANT):**
+   ```bash
+   python setup_brain.py
+   ```
+   *This script checks your VRAM, Python version, Ollama connection, and models. If it fails, it will tell you exactly what command to run to fix it.*
+
+4. **Start the Brain:**
+   ```bash
+   python brain_server.py
+   ```
+
+---
 
 ## 💻 Usage
 
 ### 1. Build the Brain (Indexing)
-Scan archives and build the Knowledge Graph. Subsequent runs process only new or modified files.
+Scan your archives and build the Knowledge Graph. (If using Docker, run this inside the container).
 ```bash
 python index_archive.py
 ```
 
-### 2. Start the MCP Bridge Server
-Expose the Brain to AI agents (Claude Desktop, Cursor, VS Code).
-```bash
-python brain_server.py
-```
-
-### 3. Run the Validation Harness
-After AutoResearchClaw generates a paper, validate and archive it in one step:
+### 2. Run the Validation Harness
+After AutoResearchClaw generates a paper, validate and archive it:
 ```bash
 python scripts/validate_and_archive.py --artifact autoresearchclaw/artifacts/rc-<run_id>/
 ```
@@ -121,22 +140,7 @@ Or run in watch mode to process new artifacts automatically:
 python scripts/validate_and_archive.py --watch
 ```
 
-The harness will:
-- Extract factual claims from the paper
-- Validate each claim against Ollama (best-effort, skips if offline)
-- Write results to `knowledge_base/system/review-queue.jsonl`
-- Enrich the paper with a validation summary and copy it to `4. Archives/`
-- Trigger incremental LightRAG indexing on the archived file
-
-### 4. Review Validated Claims
-Via the MCP bridge (from any connected agent):
-```
-review_queue()                    # all entries
-review_queue("pending_review")    # awaiting human decision
-review_queue("failed")            # claims that did not pass validation
-```
-
-### 5. Explore the Graph
+### 3. Explore the Graph
 ```bash
 python brain_explorer.py
 ```

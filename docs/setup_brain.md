@@ -27,6 +27,37 @@ The system operates in two distinct tiers to optimize for performance and VRAM:
 
 ## 🛠️ 3. First-Time Setup
 
+You can run ZeroCostBrain natively or via Docker. The Docker approach is recommended for the simplest setup.
+
+### Option A: The Easy Way (Docker)
+This bundles everything you need, including Ollama and the Python environment.
+
+```bash
+# 1. Clone the repository
+git clone https://github.com/asiriji-lab/Personal-ai-archive.git
+cd Personal-ai-archive
+
+# 2. Configure your Vault path
+copy .env.example .env
+# Edit .env and set BRAIN_VAULT_PATH to your Obsidian vault directory
+
+# 3. Launch the stack
+# For CPU / Mac / AMD:
+docker-compose up -d
+# For NVIDIA GPUs (Highly Recommended):
+docker-compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
+```
+*(Docker will automatically download the required Ollama models and start the brain server).*
+
+**Running CLI Commands in Docker:**
+When using Docker, any CLI commands must be run *inside* the container:
+```bash
+docker exec -it zerocostbrain_app python embed.py
+```
+
+### Option B: The Native Way (Python)
+If you already have Python 3.10+ and Ollama installed:
+
 ```bash
 # 1. Install Python dependencies
 pip install -r requirements.txt
@@ -42,22 +73,19 @@ PARAMETER num_ctx 4096
 PARAMETER num_gpu 99
 "@ | Out-File -FilePath "$env:TEMP\Modelfile" -Encoding utf8
 ollama create qwen3.5:4b-brain -f "$env:TEMP\Modelfile"
-# On Linux/macOS:
-# printf "FROM qwen3.5:4b\nPARAMETER num_ctx 4096\nPARAMETER num_gpu 99\n" > /tmp/Modelfile
-# ollama create qwen3.5:4b-brain -f /tmp/Modelfile
 
 # 3. Configure your vault path
 copy .env.example .env
 # Edit .env and set BRAIN_VAULT_PATH to your Obsidian vault location
 
-# 4. Verify setup — also bootstraps the vault skeleton on first run
-python -c "from config import validate_paths; validate_paths(); print('Config OK')"
-# First run will create knowledge_base/1. Projects/, 2. Areas/, 3. Resources/, 4. Archives/, system/
-# To use an existing Obsidian vault instead, set BRAIN_VAULT_PATH in .env first.
+# 4. Run Pre-Flight Validation (IMPORTANT)
+python setup_brain.py
+# This script checks your VRAM, Python version, Ollama connection, and models.
+# First run will create knowledge_base/1. Projects/, 2. Areas/, etc.
 
 # 5. Index your Active Vault (3. Resources) into the SQLite vector store
 python embed.py
-# Drop .md files into 3. Resources/ first. This enables vault_search via the MCP bridge.
+# Drop .md files into 3. Resources/ first.
 
 # 6. Build the initial knowledge graph (drop .md files in 4. Archives/ first)
 python index_archive.py

@@ -14,7 +14,7 @@ graph TB
         T4R["📄 4. Archives/research\nAI-generated papers"]
     end
 
-    subgraph ENGINE["ZeroCostBrain Engine"]
+    subgraph DOCKER_ENGINE["Docker Container: zerocostbrain_app"]
         EMB["embed.py\nChunks + indexes vault"]
         QRY["query.py\nBM25 + Vector + RRF search"]
         IDX["index_archive.py\nBuilds LightRAG graph"]
@@ -23,7 +23,7 @@ graph TB
         DB["data/index.db\nSQLite vector store"]
     end
 
-    subgraph OLLAMA["Ollama (local, always running)"]
+    subgraph DOCKER_OLLAMA["Docker Container: zerocostbrain_ollama"]
         QWEN["qwen3.5:4b-brain\nReasoning + indexing (thinking OFF)"]
         NOMIC["nomic-embed-text\nText → vectors (768-dim)"]
     end

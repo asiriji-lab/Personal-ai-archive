@@ -73,8 +73,8 @@ graph TD
         BS -->|TUI| TUI["brain_tui.py"]
     end
 
-    %% AI Models
-    OLLAMA["Ollama (Local LLM/Embed)"]
+    %% AI Models (Docker Network)
+    OLLAMA["Ollama (http://ollama:11434)"]
     GEMINI["Gemini 2.0 Flash (Cloud — Validation)"]
 
     IA & EM & QP & QA --- OLLAMA
@@ -103,8 +103,12 @@ All automated research from `AutoResearchClaw` is gated by `scripts/validate_and
 `embed.py` is a **manual CLI script** (not a background watcher). Run it after adding or editing notes in `3. Resources/`:
 
 ```powershell
+# If using Native setup:
 python embed.py          # incremental (new/changed/deleted)
 python embed.py --reset  # full rebuild
+
+# If using Docker setup:
+docker exec -it zerocostbrain_app python embed.py
 ```
 
 It uses a hash-based manifest (`data/embed_manifest.json`) for atomic, resumable indexing. Chunks are produced by `utils.chunk_text()` (max 1500 chars, paragraph-aware). Embeddings are stored in `data/index.db` via `sqlite-vec` + `FTS5`.
@@ -146,7 +150,7 @@ Query length limit: 2000 characters. Note content limit: 100 KB.
 
 | Model | Role | Provider |
 |-------|------|----------|
-| `qwen3.5:4b-brain` | Entity extraction (LightRAG), Archive indexing | Ollama (Local) |
-| `nomic-embed-text` | 768-dim text embeddings (both tiers) | Ollama (Local) |
+| `qwen3.5:4b-brain` | Entity extraction (LightRAG), Archive indexing | Ollama (Docker internal net) |
+| `nomic-embed-text` | 768-dim text embeddings (both tiers) | Ollama (Docker internal net) |
 | `gemini-2.0-flash` | Claims extraction fallback (validation harness) | Google Cloud |
-| `qwen3.5:4b` | Claim validation (validation harness) | Ollama (Local) |
+| `qwen3.5:4b` | Claim validation (validation harness) | Ollama (Docker internal net) |

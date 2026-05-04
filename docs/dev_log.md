@@ -599,6 +599,36 @@ Full audit and remediation focused on Phase 3: System stability, safety, and Tie
 
 ---
 
+## Onboarding & Architecture Remediation Sprint — 2026-05-04
+
+Full audit and remediation of the Onboarding Sprint deliverables to ensure cross-platform compatibility and structural resilience.
+
+### Fix 1 — `docker-compose.yml`: Hardcoded GPU Constraints
+**Problem**: The `ollama` service hardcoded a `deploy` block requiring an NVIDIA driver, making the Docker stack instantly crash on Mac, AMD, or CPU-only hosts.
+**Fix**: Stripped the `deploy` block from `docker-compose.yml` and created an override file `docker-compose.gpu.yml` for NVIDIA users to opt-in.
+
+### Fix 2 — `docker-compose.yml`: Host Path Injection
+**Problem**: The compose file mounted the host's `.env` directly into the container (`./.env:/app/.env`), which injected Windows paths (e.g. `C:\Vault`) into the Linux container, breaking all path resolution.
+**Fix**: Removed the volume mount. Injected `env_file: - .env` and explicitly overrode `BRAIN_VAULT_PATH=/app/knowledge_base` inside the `environment` block to ensure container logic remains isolated from host paths.
+
+### Fix 3 — `setup_brain.py`: Docker `os.environ` Blindspot
+**Problem**: The pre-flight script used `python-dotenv` which strictly reads from the `.env` file, ignoring Docker's runtime `environment` overrides. This caused the script to attempt to ping the host's `127.0.0.1:11434` instead of the internal `http://ollama:11434` container link.
+**Fix**: Added `env_vars.update(os.environ)` to merge system environment variables, ensuring Docker overrides take precedence over the file.
+
+### Fix 4 — `setup_brain.py`: Startup Race Conditions
+**Problem**: If the `ollama` container booted slowly, `setup_brain.py` would instantly crash when it failed to connect.
+**Fix**: Implemented a 5-attempt, 10-second exponential backoff loop in `check_ollama`. Also added a Docker `healthcheck` to the `ollama` service and a `depends_on: condition: service_healthy` to the app service.
+
+### Fix 5 — `setup_brain.py`: Brittle `.env` Parser
+**Problem**: The custom `.env` parser failed completely on quoted strings and inline comments, making it extremely fragile.
+**Fix**: Switched to `python-dotenv` as the primary parser. Implemented a robust fallback using Python's `shlex` library for bare-metal pre-flight checks where dependencies might not yet be installed.
+
+### Fix 6 — Testing: Validation Penalty
+**Problem**: Testing the `.env` parser caused a 10-second penalty because the mock connection triggered the backoff loop.
+**Fix**: Updated `tests/test_onboarding.py` to inject `IS_TEST=true` into the subprocess environment, allowing `setup_brain.py` to exit early and bypass the network ping. Tests now run in ~2 seconds.
+
+---
+
 ## Performance Numbers (Measured)
 
 | Setting | Value |
