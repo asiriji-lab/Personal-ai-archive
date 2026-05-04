@@ -1,16 +1,19 @@
+import asyncio
 import os
 import sys
-import pytest
-import asyncio
 from pathlib import Path
+
+import pytest
 
 # Add the root directory to path so we can import project modules
 sys.path.append(str(Path(__file__).parent.parent))
 
 from lightrag import LightRAG, QueryParam
 from lightrag.utils import EmbeddingFunc
-import index_archive
+
 import config
+import index_archive
+
 
 @pytest.mark.skipif(os.environ.get("GITHUB_ACTIONS") == "true", reason="Cannot run LLM inference on GitHub Actions runners")
 def test_rag_pipeline(tmp_path):
@@ -21,10 +24,10 @@ def test_rag_pipeline(tmp_path):
     async def run():
         # 1. State Isolation: Use tmp_path for the working directory
         working_dir = str(tmp_path)
-        
+
         # 2. Setup Provider
         provider = index_archive._setup_provider()
-        
+
         # 3. Initialize LightRAG
         rag = LightRAG(
             working_dir=working_dir,
@@ -42,15 +45,15 @@ def test_rag_pipeline(tmp_path):
                 func=index_archive._local_embed,
             ),
         )
-        
+
         await rag.initialize_storages()
-        
+
         # 4. Insert dummy document
         await rag.ainsert("The sky is blue and water is wet.")
-        
+
         # 5. Run a query
         result = await rag.aquery("What color is the sky?", param=QueryParam(mode="naive"))
-        
+
         # 6. Structural Assertions Only
         assert isinstance(result, str)
         assert len(result) > 0
