@@ -144,27 +144,24 @@ def _extract_from_llm(paper_text: str) -> list[str]:
         logger.warning("No Gemini API key — skipping LLM claim extraction.")
         return []
 
-    url = (
-        f"https://generativelanguage.googleapis.com/v1beta/models"
-        f"/{GEMINI_MODEL}:generateContent"
-    )
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
     payload = {
         "system_instruction": {
-            "parts": [{
-                "text": (
-                    "You are a precise claim extractor. Return only a JSON array "
-                    "of strings. Each string is one distinct factual claim from "
-                    "the text. Limit to 15 claims maximum. No preamble."
-                )
-            }]
+            "parts": [
+                {
+                    "text": (
+                        "You are a precise claim extractor. Return only a JSON array "
+                        "of strings. Each string is one distinct factual claim from "
+                        "the text. Limit to 15 claims maximum. No preamble."
+                    )
+                }
+            ]
         },
         "contents": [{"parts": [{"text": context}]}],
     }
 
     try:
-        resp = requests.post(
-            url, params={"key": GEMINI_API_KEY}, json=payload, timeout=30
-        )
+        resp = requests.post(url, params={"key": GEMINI_API_KEY}, json=payload, timeout=30)
         resp.raise_for_status()
         text = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
         text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text.strip())
@@ -174,9 +171,7 @@ def _extract_from_llm(paper_text: str) -> list[str]:
         return []
 
 
-def extract_claims(
-    paper_path: Path, summary_path: Path
-) -> tuple[list[str], str]:
+def extract_claims(paper_path: Path, summary_path: Path) -> tuple[list[str], str]:
     """Return (claims[:20], extraction_path) where path is 'primary' or 'fallback'."""
     try:
         summary_data = json.loads(summary_path.read_text(encoding="utf-8"))
@@ -303,9 +298,7 @@ def _regen_md(entries: list[dict]) -> str:
     def _group_ts(kv: tuple) -> str:
         return kv[1][0].get("timestamp", "")
 
-    for (source_file, run_id), group in sorted(
-        groups.items(), key=_group_ts, reverse=True
-    ):
+    for (source_file, run_id), group in sorted(groups.items(), key=_group_ts, reverse=True):
         lines.append(f"## {source_file} — {run_id}")
         lines.append("| # | Claim | Verdict | Confidence | Explanation | Status |")
         lines.append("|---|-------|---------|------------|-------------|--------|")
@@ -325,9 +318,7 @@ def _regen_md(entries: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def write_review_queue(
-    run_id: str, source_file: str, verdicts: list[dict]
-) -> None:
+def write_review_queue(run_id: str, source_file: str, verdicts: list[dict]) -> None:
     """Append claim records and regenerate review-queue.md. Raises OSError on write failure."""
     QUEUE_DIR.mkdir(parents=True, exist_ok=True)
     now = datetime.now(timezone.utc).isoformat()
@@ -392,8 +383,8 @@ def enrich_paper(paper_text: str, run_id: str, verdicts: list[dict]) -> str:
 
     summary_yaml = (
         f"validation_summary:\n"
-        f"  run_id: \"{run_id}\"\n"
-        f"  validated_at: \"{now}\"\n"
+        f'  run_id: "{run_id}"\n'
+        f'  validated_at: "{now}"\n'
         f"  total_claims: {len(verdicts)}\n"
         f"  passed: {passed}\n"
         f"  failed: {failed}\n"
@@ -429,7 +420,7 @@ def enrich_paper(paper_text: str, run_id: str, verdicts: list[dict]) -> str:
     if match:
         fm_body = match.group(1)
         new_fm = f"---\n{fm_body}\n{summary_yaml}---\n"
-        rest = paper_text[match.end():]
+        rest = paper_text[match.end() :]
         return new_fm + (notice + "\n" if notice else "") + rest
     else:
         new_fm = f"---\n{summary_yaml}---\n"
@@ -466,6 +457,7 @@ def _destination_path(paper_text: str, run_id: str) -> Path:
 # ──────────────────────────────────────────────
 async def _trigger_indexing(dest_path: Path) -> None:
     from index_archive import index_single_file
+
     await index_single_file(dest_path)
 
 
@@ -556,9 +548,7 @@ async def watch_mode() -> None:
                     code = await run_pipeline(entry)
                     processed.add(entry.name)
                     if code != 0:
-                        logger.warning(
-                            f"Pipeline for {entry.name} exited with code {code}"
-                        )
+                        logger.warning(f"Pipeline for {entry.name} exited with code {code}")
             else:
                 logger.debug(f"Artifacts directory not found: {ARTIFACTS_DIR}")
             await asyncio.sleep(30)
@@ -570,9 +560,7 @@ async def watch_mode() -> None:
 # ENTRY POINT
 # ──────────────────────────────────────────────
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description="Validate and archive AutoResearchClaw paper artifacts."
-    )
+    parser = argparse.ArgumentParser(description="Validate and archive AutoResearchClaw paper artifacts.")
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument(
         "--artifact",

@@ -58,6 +58,7 @@ def _is_indexer_running() -> bool:
     """Return True if index_archive.py is currently running as a process."""
     try:
         import psutil
+
         for proc in psutil.process_iter(["cmdline"]):
             try:
                 cmdline = proc.info.get("cmdline") or []
@@ -89,13 +90,9 @@ def get_gpu_display() -> str:
 
 def get_vault_stats() -> str:
     try:
-        archive_count = len(glob.glob(
-            str(ARCHIVE_PATH / "**" / "*.md"), recursive=True
-        ))
+        archive_count = len(glob.glob(str(ARCHIVE_PATH / "**" / "*.md"), recursive=True))
         reports_path = VAULT_PATH / "1. Projects" / "Research_Reports"
-        report_count = len(glob.glob(
-            str(reports_path / "*.md"), recursive=True
-        )) if reports_path.exists() else 0
+        report_count = len(glob.glob(str(reports_path / "*.md"), recursive=True)) if reports_path.exists() else 0
         return f"[bold white]{archive_count}[/] Archive | [bold white]{report_count}[/] Reports"
     except OSError:
         return "[red]N/A[/]"
@@ -156,19 +153,22 @@ def run_task(name: str, script: str, extra_args: list[str] | None = None):
     script_path = os.path.join(SCRIPT_DIR, script)
 
     if not os.path.exists(script_path):
-        console.print(Panel(
-            f"[bold red]❌ Script not found:[/] {script}\n"
-            f"[dim]Expected at: {script_path}[/]",
-            border_style="red",
-        ))
+        console.print(
+            Panel(
+                f"[bold red]❌ Script not found:[/] {script}\n[dim]Expected at: {script_path}[/]",
+                border_style="red",
+            )
+        )
         console.input("\n[bold white]Press Enter to return...[/]")
         return
 
     console.clear()
-    console.print(Panel(
-        f"🚀 [bold yellow]STARTING {name.upper()}...[/]",
-        border_style="yellow",
-    ))
+    console.print(
+        Panel(
+            f"🚀 [bold yellow]STARTING {name.upper()}...[/]",
+            border_style="yellow",
+        )
+    )
 
     cmd = [PYTHON, script_path]
     if extra_args:
@@ -178,20 +178,26 @@ def run_task(name: str, script: str, extra_args: list[str] | None = None):
         subprocess.run(cmd, check=True)
         console.print(f"\n[bold green]✅ {name} finished successfully.[/]")
     except subprocess.CalledProcessError as e:
-        console.print(Panel(
-            f"[bold red]❌ ERROR IN {name}:[/]\nExit code {e.returncode}.",
-            border_style="red",
-        ))
+        console.print(
+            Panel(
+                f"[bold red]❌ ERROR IN {name}:[/]\nExit code {e.returncode}.",
+                border_style="red",
+            )
+        )
     except FileNotFoundError:
-        console.print(Panel(
-            f"[bold red]❌ Python interpreter not found:[/] {sys.executable}",
-            border_style="red",
-        ))
+        console.print(
+            Panel(
+                f"[bold red]❌ Python interpreter not found:[/] {sys.executable}",
+                border_style="red",
+            )
+        )
     except Exception as e:
-        console.print(Panel(
-            f"[bold red]❌ CRITICAL FAILURE:[/]\n{str(e)}",
-            border_style="red",
-        ))
+        console.print(
+            Panel(
+                f"[bold red]❌ CRITICAL FAILURE:[/]\n{str(e)}",
+                border_style="red",
+            )
+        )
 
     console.input("\n[bold white]Press Enter to return...[/]")
 
@@ -213,15 +219,19 @@ def main():
         status_table.add_row("📍 MODE", "HITL Protected (Safeguarded)")
         status_table.add_row("📍 VAULT PATH", f"[dim]{VAULT_PATH}[/]")
 
-        layout["body"].update(Panel(
-            status_table,
-            title="[bold blue]VITALS[/]",
-            border_style="blue",
-        ))
-        layout["footer"].update(Panel(
-            "[bold yellow]NEW:[/] Option 6 for neural map | Config via [bold].env[/] file",
-            border_style="white",
-        ))
+        layout["body"].update(
+            Panel(
+                status_table,
+                title="[bold blue]VITALS[/]",
+                border_style="blue",
+            )
+        )
+        layout["footer"].update(
+            Panel(
+                "[bold yellow]NEW:[/] Option 6 for neural map | Config via [bold].env[/] file",
+                border_style="white",
+            )
+        )
 
         console.clear()
         console.print(layout)

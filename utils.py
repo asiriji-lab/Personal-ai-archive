@@ -15,7 +15,8 @@ import sys
 # FILENAME SANITIZATION
 # ──────────────────────────────────────────────
 _UNSAFE_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
-_TRAVERSAL = re.compile(r'\.\.')
+_TRAVERSAL = re.compile(r"\.\.")
+
 
 def sanitize_filename(title: str) -> str:
     """
@@ -59,14 +60,14 @@ def chunk_text(text: str, max_chars: int = 1500) -> list[str]:
 
         # If a single paragraph is too large, split it further
         if len(para) > max_chars:
-            sentences = re.split(r'(?<=[.!?])\s+', para)
+            sentences = re.split(r"(?<=[.!?])\s+", para)
             for sentence in sentences:
                 if len(sentence) > max_chars:
                     if current_chunk:
                         chunks.append(current_chunk.strip())
                         current_chunk = ""
                     for i in range(0, len(sentence), max_chars):
-                        chunks.append(sentence[i:i+max_chars])
+                        chunks.append(sentence[i : i + max_chars])
                 else:
                     if len(current_chunk) + len(sentence) + 1 > max_chars:
                         if current_chunk:
@@ -91,6 +92,7 @@ import time
 _gpu_cache = {"data": None, "ts": 0.0}
 GPU_CACHE_TTL = 3.0
 
+
 def get_gpu_stats() -> dict:
     """
     Query nvidia-smi for GPU memory and utilization.
@@ -109,18 +111,14 @@ def get_gpu_stats() -> dict:
             "used_mb": int(used),
             "total_mb": int(total),
             "utilization": int(util),
-            "display": f"{used}MB / {total}MB ({util}% Load)"
+            "display": f"{used}MB / {total}MB ({util}% Load)",
         }
         _gpu_cache["data"] = result
         _gpu_cache["ts"] = now
         return result
     except (subprocess.SubprocessError, FileNotFoundError, ValueError):
-        return {
-            "used_mb": None,
-            "total_mb": None,
-            "utilization": None,
-            "display": "GPU Offline"
-        }
+        return {"used_mb": None, "total_mb": None, "utilization": None, "display": "GPU Offline"}
+
 
 # ──────────────────────────────────────────────
 # SYSTEM UTILITIES
@@ -133,7 +131,10 @@ def file_hash(path: str) -> str:
             h.update(block)
     return h.hexdigest()
 
+
 _logging_initialized = False
+
+
 def setup_logging(level=logging.INFO):
     global _logging_initialized
     if _logging_initialized:

@@ -9,23 +9,28 @@ import urllib.request
 
 
 class Colors:
-    GREEN = '\033[92m'
-    YELLOW = '\033[93m'
-    RED = '\033[91m'
-    RESET = '\033[0m'
-    BOLD = '\033[1m'
+    GREEN = "\033[92m"
+    YELLOW = "\033[93m"
+    RED = "\033[91m"
+    RESET = "\033[0m"
+    BOLD = "\033[1m"
+
 
 def print_step(msg):
     print(f"\n{Colors.BOLD}>>> {msg}{Colors.RESET}")
 
+
 def print_success(msg):
     print(f"  {Colors.GREEN}[OK] {msg}{Colors.RESET}")
+
 
 def print_error(msg):
     print(f"  {Colors.RED}[FAIL] {msg}{Colors.RESET}")
 
+
 def print_warn(msg):
     print(f"  {Colors.YELLOW}[WARN] {msg}{Colors.RESET}")
+
 
 def check_python_version():
     print_step("Checking Python Version")
@@ -37,6 +42,7 @@ def check_python_version():
         print_error(f"Python version is {version.major}.{version.minor}. Required: 3.10+")
         return False
 
+
 def check_env_file():
     print_step("Checking Environment Configuration")
     if os.path.exists(".env"):
@@ -44,6 +50,7 @@ def check_env_file():
         env_vars = {}
         try:
             from dotenv import dotenv_values
+
             env_vars = dotenv_values(".env")
             print_success("Parsed .env using python-dotenv")
         except ImportError:
@@ -53,10 +60,10 @@ def check_env_file():
                     if line.strip() and not line.startswith("#"):
                         try:
                             # Use shlex to cleanly handle quotes
-                            s = shlex.shlex(line, posix=True, punctuation_chars='=')
-                            s.commenters = '#'
+                            s = shlex.shlex(line, posix=True, punctuation_chars="=")
+                            s.commenters = "#"
                             parts = list(s)
-                            if len(parts) >= 3 and parts[1] == '=':
+                            if len(parts) >= 3 and parts[1] == "=":
                                 # Join anything after '=' just in case
                                 env_vars[parts[0]] = "".join(parts[2:]).strip()
                         except ValueError:
@@ -83,6 +90,7 @@ def check_env_file():
         print_error(".env file missing. Please copy .env.example to .env")
         return False, {}
 
+
 def check_ollama(env_vars):
     print_step("Checking Ollama Connection")
 
@@ -106,10 +114,12 @@ def check_ollama(env_vars):
                 break
         except (urllib.error.URLError, ConnectionError, TimeoutError):
             if attempt < max_retries - 1:
-                print_warn(f"Could not connect to Ollama. Retrying in 2 seconds... ({attempt+1}/{max_retries})")
+                print_warn(f"Could not connect to Ollama. Retrying in 2 seconds... ({attempt + 1}/{max_retries})")
                 time.sleep(2)
             else:
-                print_error(f"Could not connect to Ollama at {host} after {max_retries} attempts. Is the service running?")
+                print_error(
+                    f"Could not connect to Ollama at {host} after {max_retries} attempts. Is the service running?"
+                )
                 return False
 
     if not connected:
@@ -118,7 +128,7 @@ def check_ollama(env_vars):
     # 2. Check if required models are pulled
     required_models = [
         env_vars.get("BRAIN_LOCAL_MODEL", "qwen3.5:4b-brain"),
-        env_vars.get("BRAIN_EMBED_MODEL", "nomic-embed-text")
+        env_vars.get("BRAIN_EMBED_MODEL", "nomic-embed-text"),
     ]
 
     available_models = [m["name"] for m in data.get("models", [])]
@@ -133,6 +143,7 @@ def check_ollama(env_vars):
             all_models_present = False
 
     return all_models_present
+
 
 def main():
     print(f"{Colors.BOLD}ZeroCostBrain - Pre-Flight Environment Validation{Colors.RESET}")
@@ -165,8 +176,11 @@ def main():
         print(f"{Colors.GREEN}{Colors.BOLD}All checks passed! You are ready to start the Brain.{Colors.RESET}")
         sys.exit(0)
     else:
-        print(f"{Colors.RED}{Colors.BOLD}Some checks failed. Please resolve the issues above before continuing.{Colors.RESET}")
+        print(
+            f"{Colors.RED}{Colors.BOLD}Some checks failed. Please resolve the issues above before continuing.{Colors.RESET}"
+        )
         sys.exit(1)
+
 
 if __name__ == "__main__":
     main()

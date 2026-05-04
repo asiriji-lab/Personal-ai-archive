@@ -22,6 +22,7 @@ def test_chunk_text():
     long_para = "This is sentence one. This is sentence two. This is sentence three."
     assert chunk_text(long_para, 30) == ["This is sentence one.", "This is sentence two.", "This is sentence three."]
 
+
 def test_sanitize_filename():
     assert sanitize_filename("safe_name.md") == "safe_name.md"
     assert sanitize_filename("unsafe/name\\test?*.txt") == "unsafe_name_test__.txt"
@@ -29,10 +30,11 @@ def test_sanitize_filename():
     assert sanitize_filename("valid\u1234.md") == "valid\u1234.md"
 
     with pytest.raises(ValueError):
-         sanitize_filename("")
+        sanitize_filename("")
 
     with pytest.raises(ValueError):
-         sanitize_filename("..")
+        sanitize_filename("..")
+
 
 def test_file_hash():
     with tempfile.NamedTemporaryFile(delete=False) as f:
@@ -46,6 +48,7 @@ def test_file_hash():
         assert len(hash1) == 32
     finally:
         os.unlink(tmp_path)
+
 
 def test_setup_logging():
     # Should not crash on multiple calls

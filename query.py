@@ -112,14 +112,10 @@ def reciprocal_rank_fusion(
 ) -> list[tuple[int, float]]:
     ranks: dict[int, float] = defaultdict(float)
 
-    for rank, (docid, _) in enumerate(
-        sorted(vector_scores.items(), key=lambda x: -x[1])
-    ):
+    for rank, (docid, _) in enumerate(sorted(vector_scores.items(), key=lambda x: -x[1])):
         ranks[docid] += 1.0 / (rrf_k + rank + 1)
 
-    for rank, (docid, _) in enumerate(
-        sorted(bm25_scores.items(), key=lambda x: -x[1])
-    ):
+    for rank, (docid, _) in enumerate(sorted(bm25_scores.items(), key=lambda x: -x[1])):
         ranks[docid] += 1.0 / (rrf_k + rank + 1)
 
     return sorted(ranks.items(), key=lambda x: -x[1])[:k]

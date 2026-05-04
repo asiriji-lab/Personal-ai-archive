@@ -43,10 +43,12 @@ def explore_brain(top_n: int = 15, max_relations: int = 12):
     """
     validate_paths()
 
-    console.print(Panel(
-        "[bold magenta]🧠 BRAIN MICROSCOPE: Neural Concept Analysis[/]",
-        expand=False,
-    ))
+    console.print(
+        Panel(
+            "[bold magenta]🧠 BRAIN MICROSCOPE: Neural Concept Analysis[/]",
+            expand=False,
+        )
+    )
 
     # Load raw brain data
     doc_entities = load_json("kv_store_full_entities.json")
@@ -79,8 +81,7 @@ def explore_brain(top_n: int = 15, max_relations: int = 12):
     console.print(ent_table)
 
     # ── STATISTICS ──
-    console.print(f"\n[dim]📊 Total unique concepts: {len(concept_map)} | "
-                  f"Total entity records: {len(doc_entities)}[/]")
+    console.print(f"\n[dim]📊 Total unique concepts: {len(concept_map)} | Total entity records: {len(doc_entities)}[/]")
 
     # ── NEURAL PATHWAYS ──
     rel_table = Table(
@@ -100,9 +101,7 @@ def explore_brain(top_n: int = 15, max_relations: int = 12):
             logic = rel.get("description", "Related Connection")
 
             # Skip internal doc-id relations
-            if (src and tgt
-                    and not str(src).startswith("doc-")
-                    and not str(tgt).startswith("doc-")):
+            if src and tgt and not str(src).startswith("doc-") and not str(tgt).startswith("doc-"):
                 short_logic = (logic[:85] + "...") if len(logic) > 85 else logic
                 rel_table.add_row(str(src), short_logic, str(tgt))
                 count += 1
@@ -112,12 +111,10 @@ def explore_brain(top_n: int = 15, max_relations: int = 12):
         if count > 0:
             console.print(rel_table)
             if count >= max_relations:
-                total_rels = sum(
-                    1 for r in relations.values()
-                    if not str(r.get("src_id", "")).startswith("doc-")
+                total_rels = sum(1 for r in relations.values() if not str(r.get("src_id", "")).startswith("doc-"))
+                console.print(
+                    f"[dim]... showing {count} of {total_rels} total pathways. Use --relations N to see more.[/]"
                 )
-                console.print(f"[dim]... showing {count} of {total_rels} total pathways. "
-                              f"Use --relations N to see more.[/]")
         else:
             console.print("[italic yellow]No cross-concept pathways discovered yet. Run more indexing![/]")
     else:

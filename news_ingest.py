@@ -37,10 +37,16 @@ INGEST_PATH = ARCHIVE_PATH / "News_Ingest"
 # ──────────────────────────────────────────────
 FEEDS = [
     # Tech
-    {"category": "Tech", "url": "https://news.google.com/rss/search?q=artificial+intelligence&hl=en-US&gl=US&ceid=US:en"},
+    {
+        "category": "Tech",
+        "url": "https://news.google.com/rss/search?q=artificial+intelligence&hl=en-US&gl=US&ceid=US:en",
+    },
     {"category": "Tech", "url": "https://news.google.com/rss/search?q=large+language+models&hl=en-US&gl=US&ceid=US:en"},
     # Finance
-    {"category": "Finance", "url": "https://news.google.com/rss/search?q=federal+reserve+interest+rates&hl=en-US&gl=US&ceid=US:en"},
+    {
+        "category": "Finance",
+        "url": "https://news.google.com/rss/search?q=federal+reserve+interest+rates&hl=en-US&gl=US&ceid=US:en",
+    },
     {"category": "Finance", "url": "https://feeds.finance.yahoo.com/rss/2.0/headline?s=^GSPC&region=US&lang=en-US"},
     # Research (arXiv)
     {"category": "Research", "url": "https://rss.arxiv.org/rss/cs.AI"},
@@ -53,19 +59,20 @@ FEEDS = [
     {"category": "LabBlog", "url": "https://research.google/blog/rss/"},
 ]
 
+
 # ──────────────────────────────────────────────
 # HELPERS
 # ──────────────────────────────────────────────
 def _safe_filename(title: str, category: str) -> str:
     """Generate a short deterministic filename from title."""
-    slug = re.sub(r'[^\w\s-]', '', title.lower())
-    slug = re.sub(r'[\s_-]+', '_', slug)[:40].strip('_')
+    slug = re.sub(r"[^\w\s-]", "", title.lower())
+    slug = re.sub(r"[\s_-]+", "_", slug)[:40].strip("_")
     uid = hashlib.md5(title.encode()).hexdigest()[:6]
     return f"{category}_{slug}_{uid}.md"
 
 
 def _strip_html(text: str) -> str:
-    return re.sub(r'<[^>]+>', '', text or '').strip()
+    return re.sub(r"<[^>]+>", "", text or "").strip()
 
 
 def _fetch_feed(url: str, timeout: int = 10) -> ET.Element | None:
@@ -107,13 +114,13 @@ def _write_article(category: str, title: str, link: str, summary: str) -> Path:
     clean_summary = _strip_html(summary) or "No summary available."
     # Trim very long arXiv abstracts
     if len(clean_summary) > 1200:
-        clean_summary = clean_summary[:1200].rsplit(' ', 1)[0] + "..."
+        clean_summary = clean_summary[:1200].rsplit(" ", 1)[0] + "..."
 
     content = f"""# {title}
 
 **Category:** {category}
 **Source:** {link}
-**Ingested:** {datetime.now().strftime('%Y-%m-%d')}
+**Ingested:** {datetime.now().strftime("%Y-%m-%d")}
 
 ## Summary
 {clean_summary}

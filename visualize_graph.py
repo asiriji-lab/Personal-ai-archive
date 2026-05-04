@@ -30,6 +30,7 @@ GRAPHML_PATH = WORKING_DIR / "graph_chunk_entity_relation.graphml"
 OUTPUT_PATH = PROJECT_ROOT / "docs" / "brain_graph.html"
 GRAPHML_NS = "http://graphml.graphdrawing.org/xmlns"
 
+
 # ──────────────────────────────────────────────
 # GRAPHML PARSER
 # ──────────────────────────────────────────────
@@ -76,15 +77,16 @@ def _parse_graphml(path: Path) -> tuple[list[dict], list[dict]]:
 # COLOR BY ENTITY TYPE
 # ──────────────────────────────────────────────
 _TYPE_COLORS = {
-    "organization": "#818cf8",   # indigo-400
-    "person":       "#fbbf24",   # amber-400
-    "concept":      "#34d399",   # emerald-400
-    "technology":   "#60a5fa",   # blue-400
-    "method":       "#a78bfa",   # violet-400
-    "dataset":      "#fb923c",   # orange-400
-    "model":        "#22d3ee",   # cyan-400
-    "paper":        "#f472b6",   # pink-400
+    "organization": "#818cf8",  # indigo-400
+    "person": "#fbbf24",  # amber-400
+    "concept": "#34d399",  # emerald-400
+    "technology": "#60a5fa",  # blue-400
+    "method": "#a78bfa",  # violet-400
+    "dataset": "#fb923c",  # orange-400
+    "model": "#22d3ee",  # cyan-400
+    "paper": "#f472b6",  # pink-400
 }
+
 
 def _node_color(node: dict) -> str:
     t = (node.get("entity_type") or node.get("type") or "").lower()
@@ -178,7 +180,7 @@ def render(top_n: int = 200, open_browser: bool = True) -> bool:
         # Truncate with ellipsis; hide label entirely for leaf nodes to reduce clutter
         max_chars = 22
         if len(nid) > max_chars:
-            label = nid[:max_chars - 1] + "…"
+            label = nid[: max_chars - 1] + "…"
         else:
             label = nid
         font_size = max(11, min(16, 10 + deg))
@@ -211,12 +213,12 @@ def render(top_n: int = 200, open_browser: bool = True) -> bool:
     stamp = time.strftime("%Y-%m-%d %H:%M:%S")
     badge = (
         f'<div style="position:fixed;top:12px;left:12px;z-index:999;'
-        f'background:#111827;border:1px solid #1e293b;border-radius:6px;'
+        f"background:#111827;border:1px solid #1e293b;border-radius:6px;"
         f'padding:8px 14px;font-family:monospace;font-size:12px;color:#64748b;">'
-        f'🧠 ZeroCostBrain Graph &nbsp;·&nbsp; '
-        f'{len(filtered_nodes)} nodes &nbsp;·&nbsp; '
-        f'{len(filtered_edges)} edges &nbsp;·&nbsp; '
-        f'Updated {stamp}</div>'
+        f"🧠 ZeroCostBrain Graph &nbsp;·&nbsp; "
+        f"{len(filtered_nodes)} nodes &nbsp;·&nbsp; "
+        f"{len(filtered_edges)} edges &nbsp;·&nbsp; "
+        f"Updated {stamp}</div>"
     )
     html = html.replace("<body>", f"<body>{badge}", 1)
 

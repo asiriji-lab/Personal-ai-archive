@@ -19,6 +19,7 @@ def test_rrf_scoring():
     assert fused[1][0] == 1
     assert fused[2][0] == 3
 
+
 def test_fts5_query_sanitization():
     assert _fts5_query("hello world") == '"hello" "world"'
     assert _fts5_query("special-characters!") == '"special" "characters"'

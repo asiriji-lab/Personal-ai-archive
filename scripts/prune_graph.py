@@ -35,7 +35,9 @@ from config import WORKING_DIR, validate_paths
 GRAPH_PATH = WORKING_DIR / "graph_chunk_entity_relation.graphml"
 
 # Regex for common date patterns (YYYY-MM-DD, Month YYYY, etc.)
-DATE_PATTERN = re.compile(r"^(?:19|20)\d{2}-\d{2}-\d{2}$|^(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4}$")
+DATE_PATTERN = re.compile(
+    r"^(?:19|20)\d{2}-\d{2}-\d{2}$|^(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4}$"
+)
 SYMBOL_PATTERN = re.compile(r"^[^a-zA-Z0-9]+$")
 
 

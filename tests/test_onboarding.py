@@ -8,6 +8,7 @@ import pytest
 # Add the root directory to path so we can import setup_brain
 sys.path.append(str(Path(__file__).parent.parent))
 
+
 def test_setup_brain_fails_on_missing_env(tmp_path, monkeypatch):
     """
     Test that the validation bar catches missing .env files
@@ -19,15 +20,12 @@ def test_setup_brain_fails_on_missing_env(tmp_path, monkeypatch):
     root_dir = Path(__file__).parent.parent
     script_path = root_dir / "setup_brain.py"
 
-    result = subprocess.run(
-        [sys.executable, str(script_path)],
-        capture_output=True,
-        text=True
-    )
+    result = subprocess.run([sys.executable, str(script_path)], capture_output=True, text=True)
 
     # It should fail (exit code 1) and warn about .env
     assert result.returncode == 1
     assert ".env file missing" in result.stdout
+
 
 def test_docker_compose_syntax_is_valid():
     """
@@ -40,15 +38,14 @@ def test_docker_compose_syntax_is_valid():
     # Skip if docker isn't installed in the test environment
     try:
         result = subprocess.run(
-            ["docker", "compose", "-f", str(compose_path), "config"],
-            capture_output=True,
-            text=True
+            ["docker", "compose", "-f", str(compose_path), "config"], capture_output=True, text=True
         )
         # 0 means the file is valid according to docker compose
         if result.returncode != 0:
             pytest.fail(f"Invalid docker-compose.yml: {result.stderr}")
     except FileNotFoundError:
         pytest.skip("Docker is not installed on this system, skipping syntax validation.")
+
 
 def test_docker_compose_gpu_syntax_is_valid():
     """
@@ -62,12 +59,13 @@ def test_docker_compose_gpu_syntax_is_valid():
         result = subprocess.run(
             ["docker", "compose", "-f", str(compose_path), "-f", str(gpu_compose_path), "config"],
             capture_output=True,
-            text=True
+            text=True,
         )
         if result.returncode != 0:
             pytest.fail(f"Invalid docker-compose override: {result.stderr}")
     except FileNotFoundError:
         pytest.skip("Docker is not installed on this system.")
+
 
 def test_env_parsing_with_quotes(tmp_path, monkeypatch):
     """
@@ -89,16 +87,11 @@ def test_env_parsing_with_quotes(tmp_path, monkeypatch):
     if "BRAIN_VAULT_PATH" in env:
         del env["BRAIN_VAULT_PATH"]
 
-    result = subprocess.run(
-        [sys.executable, str(script_path)],
-        capture_output=True,
-        text=True,
-        env=env
-    )
+    result = subprocess.run([sys.executable, str(script_path)], capture_output=True, text=True, env=env)
 
     # We expect a warning that the vault path doesn't exist, NOT a parse error.
     # We check for the existence of the warning message without being overly strict
     # about exact drive letter/backslash escaping which can vary by parser.
     assert "Vault path does NOT exist" in result.stdout
     assert "Test Vault" in result.stdout
-    assert "Ollama" in result.stdout # Should proceed to Ollama check
+    assert "Ollama" in result.stdout  # Should proceed to Ollama check

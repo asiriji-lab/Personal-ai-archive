@@ -60,8 +60,7 @@ class ArchiveChangeHandler(FileSystemEventHandler):
                     self._pending = True
                     wait = self.debounce_seconds - elapsed
                     logger.info(
-                        f"📋 Change detected ({event_type}: {Path(event_path).name}). "
-                        f"Waiting {wait:.0f}s debounce..."
+                        f"📋 Change detected ({event_type}: {Path(event_path).name}). Waiting {wait:.0f}s debounce..."
                     )
                 return
 
@@ -125,8 +124,7 @@ def _debounce_loop(handler: ArchiveChangeHandler):
 def main():
     parser = argparse.ArgumentParser(description="Watch Archives for changes and auto-index.")
     parser.add_argument(
-        "--debounce", type=int, default=60,
-        help="Seconds to wait after last change before indexing (default: 60)."
+        "--debounce", type=int, default=60, help="Seconds to wait after last change before indexing (default: 60)."
     )
     args = parser.parse_args()
 

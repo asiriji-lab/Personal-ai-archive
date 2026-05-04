@@ -55,12 +55,13 @@ def _load_manifest() -> dict[str, str]:
 def _save_manifest(manifest: dict[str, str]) -> None:
     MANIFEST_PATH.parent.mkdir(parents=True, exist_ok=True)
     # Atomic save to prevent corruption on interrupt
-    temp_path = MANIFEST_PATH.with_suffix('.tmp')
+    temp_path = MANIFEST_PATH.with_suffix(".tmp")
     temp_path.write_text(
         json.dumps(manifest, indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
     temp_path.replace(MANIFEST_PATH)
+
 
 # ──────────────────────────────────────────────
 # EMBEDDING
@@ -75,7 +76,7 @@ def get_embeddings(texts: list[str]) -> list[list[float]]:
         BATCH_SIZE = 16
         all_embeddings = []
         for i in range(0, len(texts), BATCH_SIZE):
-            batch = texts[i:i + BATCH_SIZE]
+            batch = texts[i : i + BATCH_SIZE]
             resp = ollama.embed(model=EMBED_MODEL, input=batch)
             all_embeddings.extend(resp["embeddings"])
         return all_embeddings
@@ -132,9 +133,7 @@ def open_db(reset: bool = False) -> sqlite3.Connection:
 # ──────────────────────────────────────────────
 def _purge_chunks(conn: sqlite3.Connection, rel_path: str) -> int:
     """Delete all chunks (and their vec_chunks rows) for a given path. Returns count deleted."""
-    row_ids = [
-        r[0] for r in conn.execute("SELECT id FROM chunks WHERE path = ?", (rel_path,))
-    ]
+    row_ids = [r[0] for r in conn.execute("SELECT id FROM chunks WHERE path = ?", (rel_path,))]
     if not row_ids:
         return 0
     placeholders = ",".join("?" * len(row_ids))
@@ -176,10 +175,7 @@ def index_resources(reset: bool = False) -> None:
 
     new_paths = current_paths - manifest_paths
     deleted_paths = manifest_paths - current_paths
-    changed_paths = {
-        p for p in (current_paths & manifest_paths)
-        if current_files[p] != manifest[p]
-    }
+    changed_paths = {p for p in (current_paths & manifest_paths) if current_files[p] != manifest[p]}
 
     print(f"Resources: {RESOURCES_PATH}")
     print(f"Total .md files : {len(current_files)}")
@@ -264,10 +260,7 @@ def index_resources(reset: bool = False) -> None:
     _save_manifest(manifest)
 
     conn.close()
-    print(
-        f"\nDone. {len(to_index)} indexed, {len(deleted_paths)} purged, "
-        f"{total_chunks} total chunks -> {DB_PATH}"
-    )
+    print(f"\nDone. {len(to_index)} indexed, {len(deleted_paths)} purged, {total_chunks} total chunks -> {DB_PATH}")
 
 
 # ──────────────────────────────────────────────

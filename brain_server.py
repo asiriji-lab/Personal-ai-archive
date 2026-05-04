@@ -31,6 +31,7 @@ from utils import get_gpu_stats, sanitize_filename, setup_logging
 setup_logging()
 logger = logging.getLogger(__name__)
 
+
 # ──────────────────────────────────────────────
 # LIFESPAN — initialize RAG inside the server's event loop
 # ──────────────────────────────────────────────
@@ -86,18 +87,21 @@ async def vault_search(query: str) -> str:
         return f"Error: Query exceeds {_MAX_QUERY_LEN} character limit."
     try:
         import asyncio
+
         results = await asyncio.to_thread(hybrid_search, query.strip())
         if not results:
             return json.dumps({"query": query, "results": [], "message": "No results found."})
         # Return top 5 with path, chunk, and a content preview
         output = []
         for r in results[:5]:
-            output.append({
-                "path": r["path"],
-                "chunk_index": r["chunk_index"],
-                "rrf_score": round(r["rrf_score"], 4),
-                "preview": r["content"][:400],
-            })
+            output.append(
+                {
+                    "path": r["path"],
+                    "chunk_index": r["chunk_index"],
+                    "rrf_score": round(r["rrf_score"], 4),
+                    "preview": r["content"][:400],
+                }
+            )
         return json.dumps({"query": query, "results": output}, indent=2)
     except Exception as e:
         logger.error(f"vault_search failed: {e}")
@@ -172,15 +176,14 @@ def brain_status() -> str:
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, idempotentHint=True))
 def review_queue(status_filter: str = "all") -> str:
     """Return validation review queue contents.
-       status_filter: "all" | "pending_review" | "failed" | "skipped"
+    status_filter: "all" | "pending_review" | "failed" | "skipped"
     """
     valid_filters = {"all", "pending_review", "failed", "skipped"}
     if status_filter not in valid_filters:
-        return json.dumps({
-            "error": f"Invalid status_filter '{status_filter}'. Valid values: {sorted(valid_filters)}"
-        })
+        return json.dumps({"error": f"Invalid status_filter '{status_filter}'. Valid values: {sorted(valid_filters)}"})
 
     from config import VAULT_PATH as _VAULT
+
     queue_path = _VAULT / "system" / "review-queue.jsonl"
 
     if not queue_path.exists():

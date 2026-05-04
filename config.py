@@ -11,6 +11,7 @@ from pathlib import Path
 
 try:
     from dotenv import load_dotenv
+
     load_dotenv()
 except ImportError:
     pass  # python-dotenv is optional; env vars still work
@@ -18,10 +19,7 @@ except ImportError:
 # ──────────────────────────────────────────────
 # PATHS
 # ──────────────────────────────────────────────
-VAULT_PATH = Path(os.getenv(
-    "BRAIN_VAULT_PATH",
-    "./knowledge_base"
-))
+VAULT_PATH = Path(os.getenv("BRAIN_VAULT_PATH", "./knowledge_base"))
 ARCHIVE_PATH = VAULT_PATH / "4. Archives"
 RESOURCES_PATH = VAULT_PATH / "3. Resources"
 WORKING_DIR = VAULT_PATH / ".lightrag"
@@ -47,6 +45,7 @@ GEMINI_API_KEY = os.getenv("GOOGLE_API_KEY", "")
 CHUNK_MAX_CHARS = int(os.getenv("BRAIN_CHUNK_SIZE", "1500"))
 if CHUNK_MAX_CHARS > 1500:
     import warnings
+
     warnings.warn(f"BRAIN_CHUNK_SIZE={CHUNK_MAX_CHARS} exceeds safe limit of 1500 for RTX 4050 6GB")
 INDEX_MANIFEST_FILE = "index_manifest.json"
 INDEX_FAILURES_FILE = "index_failures.json"
@@ -64,11 +63,12 @@ class RAGConfig(TypedDict):
     llm_provider: str
     chunk_max_chars: int
 
+
 _SKELETON_DIRS = [
     VAULT_PATH / "1. Projects",
     VAULT_PATH / "2. Areas",
-    RESOURCES_PATH,   # 3. Resources
-    ARCHIVE_PATH,     # 4. Archives
+    RESOURCES_PATH,  # 3. Resources
+    ARCHIVE_PATH,  # 4. Archives
     VAULT_PATH / "system",
 ]
 
@@ -86,6 +86,7 @@ def validate_paths():
         for d in bootstrapped:
             print(f"   {d}", file=sys.stderr)
         print("💡 To use an existing Obsidian vault, set BRAIN_VAULT_PATH in .env\n", file=sys.stderr)
+
 
 def is_safe_path(target_path: Path, base_path: Path) -> bool:
     """Ensure that the target_path strictly resolves within the base_path boundary."""

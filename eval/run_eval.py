@@ -27,6 +27,7 @@ FAILURES_OUT = PROJECT_ROOT / "failures.json"
 PASS_THRESHOLD = 0.8
 NEGATIVE_SCORE_THRESHOLD = 0.018
 
+
 # ──────────────────────────────────────────────
 # METRICS
 # ──────────────────────────────────────────────
@@ -41,6 +42,7 @@ def recall_at_k(results: list[dict], expected_paths: list[str], k: int = 10) -> 
     expected = set(expected_paths)
     return len(returned & expected) / len(expected)
 
+
 def precision_at_k(results: list[dict], expected_paths: list[str], k: int = 10) -> float:
     if not expected_paths:
         return 1.0 if (not results or results[0].get("rrf_score", 0.0) < NEGATIVE_SCORE_THRESHOLD) else 0.0
@@ -49,6 +51,7 @@ def precision_at_k(results: list[dict], expected_paths: list[str], k: int = 10) 
         return 0.0
     expected = set(expected_paths)
     return len(returned & expected) / min(k, len(returned))
+
 
 # ──────────────────────────────────────────────
 # RUNNER
@@ -64,6 +67,7 @@ async def run_eval(queries_path: Path, tier: str) -> None:
     if tier in ("2", "both"):
         print("\n=== RUNNING TIER 2 (LightRAG) ===")
         await _run_eval_tier2(queries)
+
 
 async def _run_eval_tier1(queries: list[dict]) -> None:
     recall_scores, precision_scores, latencies, _failures = [], [], [], []
@@ -84,15 +88,16 @@ async def _run_eval_tier1(queries: list[dict]) -> None:
 
     latencies.sort()
     avg_latency = sum(latencies) / len(latencies)
-    p50 = latencies[len(latencies)//2] if latencies else 0.0
-    p95 = latencies[int(len(latencies)*0.95)] if latencies else 0.0
+    p50 = latencies[len(latencies) // 2] if latencies else 0.0
+    p95 = latencies[int(len(latencies) * 0.95)] if latencies else 0.0
     avg_recall = sum(recall_scores) / len(recall_scores) if recall_scores else 0.0
     avg_precision = sum(precision_scores) / len(precision_scores) if precision_scores else 0.0
 
-    print(f"\n{'='*50}")
+    print(f"\n{'=' * 50}")
     print(f"Recall@10    : {avg_recall:.3f} (threshold {PASS_THRESHOLD})")
     print(f"Precision@10 : {avg_precision:.3f}")
     print(f"Latency      : Avg={avg_latency:.2f}s  p50={p50:.2f}s  p95={p95:.2f}s")
+
 
 async def _run_eval_tier2(queries: list[dict]) -> None:
     latencies = []
@@ -109,11 +114,12 @@ async def _run_eval_tier2(queries: list[dict]) -> None:
 
     latencies.sort()
     avg_latency = sum(latencies) / len(latencies)
-    p50 = latencies[len(latencies)//2] if latencies else 0.0
-    p95 = latencies[int(len(latencies)*0.95)] if latencies else 0.0
+    p50 = latencies[len(latencies) // 2] if latencies else 0.0
+    p95 = latencies[int(len(latencies) * 0.95)] if latencies else 0.0
 
-    print(f"\n{'='*50}")
+    print(f"\n{'=' * 50}")
     print(f"Latency      : Avg={avg_latency:.2f}s  p50={p50:.2f}s  p95={p95:.2f}s")
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Evaluate recall@10 for the brain index.")

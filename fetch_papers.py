@@ -117,15 +117,17 @@ def _fetch_rss(category: str, timeout: int = 15) -> list[dict]:
         if not arxiv_id or not title:
             continue
 
-        papers.append({
-            "arxiv_id": arxiv_id,
-            "title": title,
-            "abstract": abstract,
-            "authors": authors_raw.strip(),
-            "link": link,
-            "pdf_url": f"https://arxiv.org/pdf/{arxiv_id}",
-            "category": category,
-        })
+        papers.append(
+            {
+                "arxiv_id": arxiv_id,
+                "title": title,
+                "abstract": abstract,
+                "authors": authors_raw.strip(),
+                "link": link,
+                "pdf_url": f"https://arxiv.org/pdf/{arxiv_id}",
+                "category": category,
+            }
+        )
 
     return papers
 
@@ -153,23 +155,23 @@ def _fetch_hf_daily_papers() -> list[dict]:
         title = item.get("title", "")
         abstract = (item.get("summary") or item.get("ai_summary") or "").replace("\n", " ").strip()
         author_list = item.get("authors", [])
-        authors = ", ".join(
-            (a.get("name", "") if isinstance(a, dict) else str(a)) for a in author_list[:8]
-        )
+        authors = ", ".join((a.get("name", "") if isinstance(a, dict) else str(a)) for a in author_list[:8])
         if len(author_list) > 8:
             authors += f" + {len(author_list) - 8} more"
         upvotes = item.get("upvotes", 0)
 
-        papers.append({
-            "arxiv_id": arxiv_id,
-            "title": title,
-            "abstract": abstract,
-            "authors": authors,
-            "link": f"https://arxiv.org/abs/{arxiv_id}",
-            "pdf_url": f"https://arxiv.org/pdf/{arxiv_id}",
-            "category": "HF-Daily",
-            "upvotes": upvotes,
-        })
+        papers.append(
+            {
+                "arxiv_id": arxiv_id,
+                "title": title,
+                "abstract": abstract,
+                "authors": authors,
+                "link": f"https://arxiv.org/abs/{arxiv_id}",
+                "pdf_url": f"https://arxiv.org/pdf/{arxiv_id}",
+                "category": "HF-Daily",
+                "upvotes": upvotes,
+            }
+        )
 
     # Sort by upvotes so the most community-validated papers come first
     papers.sort(key=lambda p: p["upvotes"], reverse=True)
@@ -251,7 +253,7 @@ def fetch_papers(dry_run: bool = False, skip_arxiv: bool = False, skip_hf: bool 
     if not skip_arxiv:
         weekday = datetime.now(timezone.utc).weekday()  # 5=Sat, 6=Sun
         if weekday >= 5:
-            day_name = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"][weekday]
+            day_name = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"][weekday]
             print(f"NOTE: Today is {day_name}. arXiv does not publish on weekends — feeds will be empty.")
         else:
             print(f"arXiv RSS — {len(categories)} categories | {len(keywords)} keyword filters")

@@ -629,25 +629,22 @@ Full audit and remediation of the Onboarding Sprint deliverables to ensure cross
 
 ---
 
-## CI & Linting Remediation — 2026-05-05
 
-Remediation triggered by the new CI pipeline to ensure codebase hygiene and test reliability.
+## CI & Linting Maintenance — 2026-05-05
 
-### Fix 1 — Global Linting Cleanup
-**Problem**: The new GitHub Action `lint` job failed with 24 errors (unsorted imports, unused variables, trailing whitespace).
-**Fix**: Applied `ruff check . --fix` across the entire repository to standardize formatting and resolve all linter violations.
+Addressed failures in the CI pipeline related to code style and test flakiness.
 
-### Fix 2 — `setup_brain.py`: Robust Fallback Env Parser
-**Problem**: The fallback `.env` parser (used when `python-dotenv` is missing) was failing to handle inline comments, causing values like `VAL # comment` to be parsed literally, which broke path validation.
-**Fix**: Updated the parser to use `shlex` with `commenters='#'`, ensuring inline comments are correctly stripped during pre-flight checks.
+### Fix 1 — Global Linting & Formatting
+**Problem**: The CI `lint` job failed due to style violations (whitespace, imports, unused variables).
+**Fix**: Ran `ruff format` and `ruff check --fix` to standardize the codebase.
 
-### Fix 3 — `tests/test_onboarding.py`: Test Environment Isolation
-**Problem**: `test_env_parsing_with_quotes` was non-deterministically failing because it inherited the host's `BRAIN_VAULT_PATH` environment variable, which overrode the mock `.env` file being tested.
-**Fix**: Modified the test to explicitly clear `BRAIN_VAULT_PATH` from the subprocess environment, ensuring true isolation.
+### Fix 2 — Test Environment Isolation
+**Problem**: `test_env_parsing_with_quotes` was non-deterministically failing because it inherited host environment variables.
+**Fix**: Modified the test to explicitly clear `BRAIN_VAULT_PATH` from the subprocess environment.
 
-### Fix 4 — `tests/test_onboarding.py`: Resilient Path Assertions
-**Problem**: Path-related assertions were overly strict about backslash escaping and drive letters, causing failures when different parsers (or OSs) represented the same path slightly differently.
-**Fix**: Updated assertions to check for the presence of the warning message and key path components rather than exact string matches.
+### Fix 3 — Robust Fallback Env Parser
+**Problem**: The fallback parser in `setup_brain.py` failed on inline comments.
+**Fix**: Updated the parser to use `shlex` with proper comment handling.
 
 ---
 

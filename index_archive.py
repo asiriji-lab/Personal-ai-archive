@@ -91,9 +91,6 @@ def _save_failures(failures: dict) -> None:
     )
 
 
-
-
-
 # ──────────────────────────────────────────────
 # PROVIDER SETUP
 # ──────────────────────────────────────────────
@@ -102,6 +99,7 @@ import functools
 
 def _make_timed_llm(func):
     """Wrap an LLM function to log duration and output size after every call."""
+
     @functools.wraps(func)
     async def timed(*args, **kwargs):
         t0 = time.perf_counter()
@@ -111,6 +109,7 @@ def _make_timed_llm(func):
         flag = " <<< SLOW" if elapsed > 180 else ""
         logger.info(f"LLM call finished: {elapsed:.1f}s | ~{out_tokens} output tokens{flag}")
         return result
+
     return timed
 
 
@@ -145,6 +144,7 @@ def _setup_provider():
 async def _local_embed(texts):
     import numpy as np
     import ollama
+
     client = ollama.AsyncClient(host=OLLAMA_HOST)
     data = await client.embed(model=EMBED_MODEL, input=texts)
     return np.array(data["embeddings"])
@@ -156,9 +156,11 @@ async def _local_embed(texts):
 _rag_instance = None
 _rag_lock = asyncio.Lock()
 
+
 def reset_rag():
     global _rag_instance
     _rag_instance = None
+
 
 async def get_rag() -> LightRAG:
     """
@@ -274,10 +276,7 @@ async def _index_single_file(rag, file_path: str, max_retries: int = INDEX_MAX_R
                 )
                 await asyncio.sleep(wait)
             else:
-                logger.error(
-                    f"❌ All {max_retries} attempts failed for "
-                    f"{Path(file_path).name}: {error_msg}"
-                )
+                logger.error(f"❌ All {max_retries} attempts failed for {Path(file_path).name}: {error_msg}")
                 return False, error_msg
 
     return False, "Unknown error"
@@ -337,8 +336,7 @@ async def index_archive(force_reset: bool = False, retry_failed: bool = False) -
                 pending.append((fp, fh))
 
         logger.info(
-            f"📊 {len(all_files)} total files | {len(pending)} new/changed | "
-            f"{len(all_files) - len(pending)} skipped"
+            f"📊 {len(all_files)} total files | {len(pending)} new/changed | {len(all_files) - len(pending)} skipped"
         )
 
     if not pending:
@@ -373,15 +371,9 @@ async def index_archive(force_reset: bool = False, retry_failed: bool = False) -
     # Save failure log
     _save_failures(failures)
 
-    logger.info(
-        f"\n✅ DONE: {success_count} indexed, {error_count} errors, "
-        f"via {LLM_PROVIDER} mode."
-    )
+    logger.info(f"\n✅ DONE: {success_count} indexed, {error_count} errors, via {LLM_PROVIDER} mode.")
     if error_count > 0:
-        logger.info(
-            f"💡 {error_count} files failed. Run `python index_archive.py --retry-failed` "
-            f"to retry them."
-        )
+        logger.info(f"💡 {error_count} files failed. Run `python index_archive.py --retry-failed` to retry them.")
 
 
 # ──────────────────────────────────────────────
@@ -391,6 +383,7 @@ async def query_archive(query: str) -> str:
     """Run a hybrid RAG query against the knowledge graph."""
     rag = await get_rag()
     return await rag.aquery(query, param=QueryParam(mode="hybrid"))
+
 
 # Deprecated alias — will be removed in a future version
 test_query = query_archive
@@ -414,8 +407,8 @@ if __name__ == "__main__":
 
     if args.provider:
         import config as _cfg
+
         _cfg.LLM_PROVIDER = args.provider.upper()
         logger.info(f"Provider overridden via CLI: {_cfg.LLM_PROVIDER}")
 
     asyncio.run(index_archive(force_reset=args.reset, retry_failed=args.retry_failed))
-
