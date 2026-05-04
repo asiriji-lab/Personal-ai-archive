@@ -646,6 +646,14 @@ Addressed failures in the CI pipeline related to code style and test flakiness.
 **Problem**: The fallback parser in `setup_brain.py` failed on inline comments.
 **Fix**: Updated the parser to use `shlex` with proper comment handling.
 
+### Fix 4 — Incremental Test Coverage for Core Pipeline
+**Problem**: Core RAG pipeline lacked end-to-end integration tests, risking regression.
+**Fix**: Created `test_pipeline.py` using `tmp_path` for graph state isolation and added a `@pytest.mark.skipif` hardware bypass for GitHub Actions (missing GPUs). Used structural assertions to prevent test flakiness.
+
+### Fix 5 — CI Docker Compose Validation
+**Problem**: GitHub Actions failed during compose syntax checks due to the hard requirement of an `env_file` which is `.gitignore`d, and threw warnings for deprecated `version` tags.
+**Fix**: Stripped `version: '3.8'` from compose files and patched `tests/test_onboarding.py` to dynamically `.touch()` and `.unlink()` a dummy `.env` file strictly for the syntax check execution.
+
 ---
 
 ## Performance Numbers (Measured)
