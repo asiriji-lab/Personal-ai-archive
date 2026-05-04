@@ -1,7 +1,7 @@
 # ZeroCostBrain — Developer Log
 
 > For the next AI, the next human, or whoever is crazy enough to read this.
-> Written after Sprint 1. Last updated: 2026-05-03.
+> Written after Sprint 1. Last updated: 2026-05-05.
 
 ---
 
@@ -626,6 +626,28 @@ Full audit and remediation of the Onboarding Sprint deliverables to ensure cross
 ### Fix 6 — Testing: Validation Penalty
 **Problem**: Testing the `.env` parser caused a 10-second penalty because the mock connection triggered the backoff loop.
 **Fix**: Updated `tests/test_onboarding.py` to inject `IS_TEST=true` into the subprocess environment, allowing `setup_brain.py` to exit early and bypass the network ping. Tests now run in ~2 seconds.
+
+---
+
+## CI & Linting Remediation — 2026-05-05
+
+Remediation triggered by the new CI pipeline to ensure codebase hygiene and test reliability.
+
+### Fix 1 — Global Linting Cleanup
+**Problem**: The new GitHub Action `lint` job failed with 24 errors (unsorted imports, unused variables, trailing whitespace).
+**Fix**: Applied `ruff check . --fix` across the entire repository to standardize formatting and resolve all linter violations.
+
+### Fix 2 — `setup_brain.py`: Robust Fallback Env Parser
+**Problem**: The fallback `.env` parser (used when `python-dotenv` is missing) was failing to handle inline comments, causing values like `VAL # comment` to be parsed literally, which broke path validation.
+**Fix**: Updated the parser to use `shlex` with `commenters='#'`, ensuring inline comments are correctly stripped during pre-flight checks.
+
+### Fix 3 — `tests/test_onboarding.py`: Test Environment Isolation
+**Problem**: `test_env_parsing_with_quotes` was non-deterministically failing because it inherited the host's `BRAIN_VAULT_PATH` environment variable, which overrode the mock `.env` file being tested.
+**Fix**: Modified the test to explicitly clear `BRAIN_VAULT_PATH` from the subprocess environment, ensuring true isolation.
+
+### Fix 4 — `tests/test_onboarding.py`: Resilient Path Assertions
+**Problem**: Path-related assertions were overly strict about backslash escaping and drive letters, causing failures when different parsers (or OSs) represented the same path slightly differently.
+**Fix**: Updated assertions to check for the presence of the warning message and key path components rather than exact string matches.
 
 ---
 

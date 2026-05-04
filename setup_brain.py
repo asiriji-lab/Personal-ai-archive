@@ -1,11 +1,12 @@
-import sys
-import os
-import subprocess
 import json
-import urllib.request
-import urllib.error
-import time
+import os
 import shlex
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+
 
 class Colors:
     GREEN = '\033[92m'
@@ -52,13 +53,15 @@ def check_env_file():
                     if line.strip() and not line.startswith("#"):
                         try:
                             # Use shlex to cleanly handle quotes
-                            parts = list(shlex.shlex(line, posix=True, punctuation_chars='='))
+                            s = shlex.shlex(line, posix=True, punctuation_chars='=')
+                            s.commenters = '#'
+                            parts = list(s)
                             if len(parts) >= 3 and parts[1] == '=':
                                 # Join anything after '=' just in case
                                 env_vars[parts[0]] = "".join(parts[2:]).strip()
                         except ValueError:
                             pass
-        
+
         # Merge os.environ so Docker overrides take precedence
         env_vars.update(os.environ)
 
@@ -74,7 +77,7 @@ def check_env_file():
                 print_warn(f"Vault path does NOT exist: {vault_path}. Please create it before indexing.")
         else:
             print_warn("BRAIN_VAULT_PATH not set in .env. Will use defaults.")
-        
+
         return True, env_vars
     else:
         print_error(".env file missing. Please copy .env.example to .env")
@@ -82,13 +85,13 @@ def check_env_file():
 
 def check_ollama(env_vars):
     print_step("Checking Ollama Connection")
-    
+
     if env_vars.get("IS_TEST") == "true":
         print_success("Test mode detected. Skipping Ollama connection.")
         return True
 
     host = env_vars.get("OLLAMA_HOST", "http://127.0.0.1:11434")
-    
+
     # 1. Check if the server is responsive
     max_retries = 5
     connected = False
@@ -101,7 +104,7 @@ def check_ollama(env_vars):
                 print_success(f"Connected to Ollama at {host}")
                 connected = True
                 break
-        except (urllib.error.URLError, ConnectionError, TimeoutError) as e:
+        except (urllib.error.URLError, ConnectionError, TimeoutError):
             if attempt < max_retries - 1:
                 print_warn(f"Could not connect to Ollama. Retrying in 2 seconds... ({attempt+1}/{max_retries})")
                 time.sleep(2)
@@ -117,9 +120,9 @@ def check_ollama(env_vars):
         env_vars.get("BRAIN_LOCAL_MODEL", "qwen3.5:4b-brain"),
         env_vars.get("BRAIN_EMBED_MODEL", "nomic-embed-text")
     ]
-    
+
     available_models = [m["name"] for m in data.get("models", [])]
-    
+
     all_models_present = True
     for model in required_models:
         # Ollama often returns tags like 'nomic-embed-text:latest'
@@ -128,22 +131,22 @@ def check_ollama(env_vars):
         else:
             print_error(f"Model missing: {model}. Run `ollama pull {model}`")
             all_models_present = False
-            
+
     return all_models_present
 
 def main():
     print(f"{Colors.BOLD}ZeroCostBrain - Pre-Flight Environment Validation{Colors.RESET}")
     print("=" * 50)
-    
+
     checks_passed = True
-    
+
     if not check_python_version():
         checks_passed = False
-        
+
     env_ok, env_vars = check_env_file()
     if not env_ok:
         checks_passed = False
-        
+
     # Only check ollama if the provider is local
     provider = env_vars.get("BRAIN_LLM_PROVIDER", "LOCAL")
     if provider == "LOCAL":
