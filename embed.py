@@ -17,6 +17,7 @@ Usage:
 """
 
 import argparse
+import contextlib
 import hashlib
 import json
 import re
@@ -38,29 +39,36 @@ DB_PATH = PROJECT_ROOT / "data" / "index.db"
 SCHEMA_PATH = PROJECT_ROOT / "data" / "schema.sql"
 MANIFEST_PATH = PROJECT_ROOT / "data" / "embed_manifest.json"
 
+try:
+    from filelock import FileLock
+    _MANIFEST_LOCK = FileLock(str(MANIFEST_PATH) + ".lock", timeout=30)
+except ImportError:
+    _MANIFEST_LOCK = None
+
 
 from utils import chunk_text, file_hash
 
 
 def _load_manifest() -> dict[str, str]:
     """Load {relative_path: md5_hash} from disk."""
-    if MANIFEST_PATH.exists():
-        try:
-            return json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            print("  WARNING: Corrupt embed manifest — will re-index everything.")
+    with (_MANIFEST_LOCK if _MANIFEST_LOCK else contextlib.nullcontext()):
+        if MANIFEST_PATH.exists():
+            try:
+                return json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                print("  WARNING: Corrupt embed manifest — will re-index everything.")
     return {}
 
 
 def _save_manifest(manifest: dict[str, str]) -> None:
     MANIFEST_PATH.parent.mkdir(parents=True, exist_ok=True)
-    # Atomic save to prevent corruption on interrupt
-    temp_path = MANIFEST_PATH.with_suffix(".tmp")
-    temp_path.write_text(
-        json.dumps(manifest, indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
-    temp_path.replace(MANIFEST_PATH)
+    with (_MANIFEST_LOCK if _MANIFEST_LOCK else contextlib.nullcontext()):
+        temp_path = MANIFEST_PATH.with_suffix(".tmp")
+        temp_path.write_text(
+            json.dumps(manifest, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        temp_path.replace(MANIFEST_PATH)
 
 
 # ──────────────────────────────────────────────
@@ -123,7 +131,11 @@ def open_db(reset: bool = False) -> sqlite3.Connection:
         if chunks_count > 0:
             conn.execute("INSERT INTO chunks_fts(chunks_fts) VALUES ('rebuild')")
             conn.commit()
-            print(f"  FTS5: rebuilt index over {chunks_count} existing chunks.")
+            rebuilt_count = conn.execute("SELECT COUNT(*) FROM chunks_fts").fetchone()[0]
+            if rebuilt_count != chunks_count:
+                print(f"  WARNING: FTS5 rebuild mismatch — expected {chunks_count}, got {rebuilt_count}. Search may be incomplete.", file=sys.stderr)
+            else:
+                print(f"  FTS5: rebuilt index over {chunks_count} existing chunks.")
 
     return conn
 

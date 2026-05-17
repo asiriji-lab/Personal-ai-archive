@@ -66,11 +66,11 @@ pip install -r requirements.txt
 ollama pull qwen3.5:4b
 ollama pull nomic-embed-text
 # Create qwen3.5:4b-brain: disables thinking trace (avoids timeout) and locks num_ctx=4096
+# num_gpu is intentionally omitted here — set BRAIN_NUM_GPU in .env instead (default -1 = auto).
 # On Windows PowerShell:
 @"
 FROM qwen3.5:4b
 PARAMETER num_ctx 4096
-PARAMETER num_gpu 99
 "@ | Out-File -FilePath "$env:TEMP\Modelfile" -Encoding utf8
 ollama create qwen3.5:4b-brain -f "$env:TEMP\Modelfile"
 

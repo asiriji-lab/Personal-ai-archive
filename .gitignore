@@ -33,7 +33,20 @@ logs/*.stderr
 graphify-out/
 docs/brain_graph.html
 docs/architecture_*.html
+docs/brain_graph_sigma.html
+docs/graph_data.json
 eval/failures.json
+
+# Debug output logs
+*_out.txt
+*_err.txt
+lightrag_import_test.txt
+
+# Runtime lock files (filelock)
+*.lock
+
+# Backup files (graph pruning creates .bak in .lightrag/)
+*.bak
 
 # Large binary artifacts — never commit personal data
 knowledge_base.zip

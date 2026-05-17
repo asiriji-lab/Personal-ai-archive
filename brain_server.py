@@ -11,6 +11,7 @@ Tools provided:
   - brain_status()           — Health check (indexed docs, GPU, provider)
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -20,7 +21,7 @@ from contextlib import asynccontextmanager
 from fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 
-from config import LLM_PROVIDER, RESOURCES_PATH, WORKING_DIR, is_safe_path, validate_paths
+from config import LLM_PROVIDER, RESOURCES_PATH, VAULT_PATH, WORKING_DIR, is_safe_path, validate_paths
 from index_archive import get_rag, query_archive, test_query
 from query import search as hybrid_search
 from utils import get_gpu_stats, sanitize_filename, setup_logging
@@ -39,7 +40,7 @@ logger = logging.getLogger(__name__)
 async def lifespan(server):
     """Initialize LightRAG storages inside FastMCP's event loop (not before it)."""
     validate_paths()
-    rag = get_rag()
+    rag = await get_rag()
     try:
         await rag.initialize_storages()
     except ConnectionError as e:
@@ -86,8 +87,6 @@ async def vault_search(query: str) -> str:
     if len(query) > _MAX_QUERY_LEN:
         return f"Error: Query exceeds {_MAX_QUERY_LEN} character limit."
     try:
-        import asyncio
-
         results = await asyncio.to_thread(hybrid_search, query.strip())
         if not results:
             return json.dumps({"query": query, "results": [], "message": "No results found."})
@@ -139,6 +138,15 @@ def save_active_note(title: str, content: str) -> str:
         return json.dumps({"error": str(e), "tool": "save_active_note"})
 
 
+def _count_json_entries(path, corrupt_msg="unknown"):
+    if not path.exists():
+        return 0
+    try:
+        return len(json.loads(path.read_text(encoding="utf-8")))
+    except (json.JSONDecodeError, OSError):
+        return corrupt_msg
+
+
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, idempotentHint=True))
 def brain_status() -> str:
     """Get the current health status of the Brain (indexed docs, GPU, provider mode)."""
@@ -146,30 +154,11 @@ def brain_status() -> str:
         "provider": LLM_PROVIDER,
         "working_dir": str(WORKING_DIR),
         "gpu": get_gpu_stats(),
+        "indexed_documents": _count_json_entries(
+            WORKING_DIR / "kv_store_doc_status.json", "unknown (corrupt status file)"
+        ),
+        "entities": _count_json_entries(WORKING_DIR / "kv_store_full_entities.json"),
     }
-
-    # Count indexed documents
-    doc_status_file = WORKING_DIR / "kv_store_doc_status.json"
-    if doc_status_file.exists():
-        try:
-            docs = json.loads(doc_status_file.read_text(encoding="utf-8"))
-            status["indexed_documents"] = len(docs)
-        except (json.JSONDecodeError, OSError):
-            status["indexed_documents"] = "unknown (corrupt status file)"
-    else:
-        status["indexed_documents"] = 0
-
-    # Count entities
-    entity_file = WORKING_DIR / "kv_store_full_entities.json"
-    if entity_file.exists():
-        try:
-            entities = json.loads(entity_file.read_text(encoding="utf-8"))
-            status["entities"] = len(entities)
-        except (json.JSONDecodeError, OSError):
-            status["entities"] = "unknown"
-    else:
-        status["entities"] = 0
-
     return json.dumps(status, indent=2, default=str)
 
 
@@ -182,9 +171,7 @@ def review_queue(status_filter: str = "all") -> str:
     if status_filter not in valid_filters:
         return json.dumps({"error": f"Invalid status_filter '{status_filter}'. Valid values: {sorted(valid_filters)}"})
 
-    from config import VAULT_PATH as _VAULT
-
-    queue_path = _VAULT / "system" / "review-queue.jsonl"
+    queue_path = VAULT_PATH / "system" / "review-queue.jsonl"
 
     if not queue_path.exists():
         return json.dumps({"entries": [], "message": "Queue is empty."})

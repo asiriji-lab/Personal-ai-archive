@@ -84,6 +84,39 @@ def chunk_text(text: str, max_chars: int = 1500) -> list[str]:
     return chunks
 
 
+def chunk_text_sections(text: str, max_chars: int = 2000) -> list[str]:
+    """
+    Split on H2/H3 heading boundaries (## / ###).
+    Falls back to chunk_text() for oversized sections.
+    Always prepends a summary chunk: first paragraph + all headings joined.
+    Returns [text] unchanged when no headings are found.
+    """
+    heading_re = re.compile(r"^(#{2,3} .+)$", re.MULTILINE)
+    positions = [m.start() for m in heading_re.finditer(text)]
+
+    if not positions:
+        return chunk_text(text, max_chars)
+
+    headings = [text[m.start():m.end()] for m in heading_re.finditer(text)]
+    preamble = text[: positions[0]].strip()
+    first_para = (preamble.split("\n\n")[0] if preamble else "").strip()
+    summary = "\n".join(filter(None, [first_para] + headings))
+
+    boundaries = positions + [len(text)]
+    sections = [text[boundaries[i] : boundaries[i + 1]].strip() for i in range(len(positions))]
+
+    chunks = [summary] if summary else []
+    for section in sections:
+        if not section:
+            continue
+        if len(section) <= max_chars:
+            chunks.append(section)
+        else:
+            chunks.extend(chunk_text(section, max_chars))
+
+    return chunks if chunks else [text]
+
+
 # ──────────────────────────────────────────────
 # GPU MONITORING
 # ──────────────────────────────────────────────

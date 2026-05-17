@@ -7,6 +7,7 @@ Override any value via environment variables or a `.env` file.
 
 import os
 import sys
+import warnings
 from pathlib import Path
 
 try:
@@ -15,6 +16,14 @@ try:
     load_dotenv()
 except ImportError:
     pass  # python-dotenv is optional; env vars still work
+
+# Limit OpenBLAS/OpenMP threads BEFORE any numpy import.
+# Without this, OpenBLAS tries to allocate a per-core thread pool on import,
+# which fails with "Memory allocation still failed after 10 retries" on
+# memory-constrained systems, causing a ~60-second hang at startup.
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("OPENBLAS_MAIN_FREE", "1")
 
 # ──────────────────────────────────────────────
 # PATHS
@@ -34,6 +43,7 @@ OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 LOCAL_LLM_MODEL = os.getenv("BRAIN_LOCAL_MODEL", "qwen3.5:4b-brain")
 EMBED_MODEL = os.getenv("BRAIN_EMBED_MODEL", "nomic-embed-text")
 LOCAL_CONTEXT_WINDOW = int(os.getenv("BRAIN_CONTEXT_WINDOW", "4096"))
+LOCAL_NUM_GPU = int(os.getenv("BRAIN_NUM_GPU", "-1"))
 
 # Cloud (Gemini)
 GEMINI_MODEL = os.getenv("BRAIN_GEMINI_MODEL", "gemini-2.0-flash")
@@ -43,10 +53,13 @@ GEMINI_API_KEY = os.getenv("GOOGLE_API_KEY", "")
 # INDEXER SETTINGS
 # ──────────────────────────────────────────────
 CHUNK_MAX_CHARS = int(os.getenv("BRAIN_CHUNK_SIZE", "1500"))
-if CHUNK_MAX_CHARS > 1500:
-    import warnings
-
-    warnings.warn(f"BRAIN_CHUNK_SIZE={CHUNK_MAX_CHARS} exceeds safe limit of 1500 for RTX 4050 6GB")
+if CHUNK_MAX_CHARS > 3000:
+    warnings.warn(
+        f"BRAIN_CHUNK_SIZE={CHUNK_MAX_CHARS} may reduce retrieval precision; "
+        "nomic-embed-text supports up to ~8192 tokens but larger chunks yield coarser matches"
+    )
+CHUNK_SECTION_MAX_CHARS = int(os.getenv("BRAIN_CHUNK_SECTION_SIZE", "2000"))
+CHUNK_B_MAX_CHARS = int(os.getenv("BRAIN_CHUNK_B_SIZE", "900"))
 INDEX_MANIFEST_FILE = "index_manifest.json"
 INDEX_FAILURES_FILE = "index_failures.json"
 INDEX_MAX_RETRIES = int(os.getenv("BRAIN_INDEX_MAX_RETRIES", "3"))
