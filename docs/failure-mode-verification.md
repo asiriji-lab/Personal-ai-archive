@@ -15,6 +15,8 @@
 
 | Finding | Verdict | Measured impact | Fix-priority |
 |---|---|---|---|
+| **NEW — embedding version drift (stale index)** | **Confirmed (severe)** | The live `index.db` vectors are NOT in the same space as today's model. Cosine of a stored vector vs a **fresh re-embed of the identical text = 0.80–0.90** (would be ~1.0 if versions matched); `embedder` column reads `nomic-embed-text` for both, so the model drifted under the same Ollama tag. Re-embedding the same 920 chunks lifts recall@10 (17 recall queries) from **0.647 → 0.941 (+0.294)**, fixing 5 of 6 failures. Query embeddings are computed fresh at query time, so they silently mismatch the stale stored vectors. Extends **B4** (model recorded by name only; `query.py` never checks it). | **P0** |
+| **C3** — nomic-embed-text task prefixes missing | **Refuted** | Controlled A/B on the same 920 chunks: CONTROL (no prefix) recall@10 = **0.941**, TREATMENT (`search_document:`/`search_query:`) = **0.941**, **Δ 0.000**, identical on every query and on all 3 negatives. Adding task prefixes does **not** improve recall on this corpus; the real query/doc space mismatch is version drift (above), not prefixes. | **Drop** |
 | **C5** — verbose queries silently disable BM25 (FTS5 implicit AND) | **Confirmed (severe)** | **BM25 returned 0 hits on 19/20 eval queries** (only `recall_14` got 1). "Hybrid" search is effectively **vector-only**; BM25's rare-term/acronym advantage is absent everywhere. | **P0** |
 | **B1** — archives double-indexed into Tier-1 | **Confirmed** | **843/920 chunks (92%) are `4. Archives/*`** (442 distinct files). Two write paths: `_SKELETON_DIRS` includes `ARCHIVE_PATH` (`config.py:75`) **and** `index_archive.py::_index_pipeline_b` (`index_archive.py:340-397`). Contradicts the documented "archives NOT indexed here" (`embed.py:7`); wastes compute; pollutes Tier-1. | **P0** |
 | **D1** — short embedding list silently drops chunks | **Confirmed** | Fault-injected `get_embeddings → len-1` vectors: trailing chunk **dropped, no error, file still recorded complete in manifest** (`test_failure_modes.py::test_d1...`). Permanent invisible recall hole; never retried. | **P0** |
@@ -25,14 +27,18 @@
 
 ## What to fix first
 
-1. **C5 (P0) is the keystone.** BM25 is dead on 95% of queries, so the system is a
-   single-retriever (vector) engine wearing a "hybrid" label. Switch `_fts5_query`
-   to OR semantics over significant tokens (drop stopwords, keep rare terms, quote
-   only real phrases). This is the single highest-leverage change and it **unblocks
-   C4** — only after BM25 contributes does a larger `CANDIDATE_K` matter.
-2. **B1 (P0):** stop writing `4. Archives/*` into Tier-1 — drop `ARCHIVE_PATH` from
-   `_SKELETON_DIRS` and the `_index_pipeline_b` archive write. Re-embed Tier-1 after,
-   then re-baseline (recall numbers above will shift once 92% of the index changes).
+1. **Re-embed the corpus (P0) — biggest, nearly-free win.** The live index is
+   model-version-stale; a plain `python embed.py --reset` lifts recall@10 from
+   **0.647 → 0.941 (+0.294)** on this eval set, no code change. **Bundle B1 into the
+   same pass** (drop `ARCHIVE_PATH` from `_SKELETON_DIRS` and the `_index_pipeline_b`
+   archive write) so the 92%-archive pollution is removed in the one re-embed.
+   *Do **not** add nomic prefixes — C3 measured Δ 0.000.* Then add a guard so this
+   can't recur: store the embed model **version/digest**, and have `query.py` warn
+   (or refuse) when the query-time model differs from the index-time one (closes B4).
+2. **C5 (P0) — unlock BM25.** It's dead on 95% of queries, so the system is
+   vector-only despite the "hybrid" label. Switch `_fts5_query` to OR semantics over
+   significant tokens (drop stopwords, keep rare terms, quote only real phrases).
+   This restores the rare-term/acronym path and **unblocks C4**.
 3. **D1 (P0):** assert `len(embeddings) == len(chunks)`; fail the file into the
    failures log instead of silently truncating + lying in the manifest.
 4. **D2 / C6 / C1 (P1):** catch `(OSError, UnicodeDecodeError)` (or read with
@@ -41,12 +47,19 @@
 5. **C4 (P2):** bump `CANDIDATE_K` to ~50–100 — but only revisit *after* C5, since
    today it measurably does nothing.
 
+> **Note on the headline numbers.** The 0.700 / 0.647 baselines were measured against
+> the *stale* live index. Re-baseline after the re-embed (#1) — the absolute recall
+> figures for C5/C4/C6 will shift, but their *direction* (BM25 dead, no floor, C4
+> masked) holds because those are structural, not embedding-quality, issues.
+
 ## Not verified this round (gated / deferred)
 
-Tier-4 items require a re-embed or LightRAG runs and were **left for a follow-up**
-per the brief (ask before any big re-embed): **C3** (nomic `search_document:` /
-`search_query:` prefixes A/B), **A1** (chunk-overlap sweep), **B2** (LightRAG stale-graph
-persistence). Also not measured: A2/A3/A4/A5 (mischunking), B3/B4/B5, C2, C7, D3, D4.
+**C3 was run and refuted (above).** Remaining Tier-4 items left for a follow-up
+(LightRAG runs / chunker rework): **A1** (chunk-overlap sweep) and **B2** (LightRAG
+stale-graph persistence — note B2 is already near-certain by inspection: `index_archive.py`
+has no delete-by-doc path, unlike `embed.py::_purge_chunks`). Also not measured:
+A2/A3/A4/A5 (mischunking), B3/B5, C2, C7, D3, D4. **B4** is now partially evidenced via
+the version-drift finding above.
 
 ## How to reproduce
 
@@ -54,4 +67,7 @@ persistence). Also not measured: A2/A3/A4/A5 (mischunking), B3/B4/B5, C2, C7, D3
   `COUNT … WHERE chunk_index=0`).
 - D1 / D2: `python -m pytest tests/test_failure_modes.py -v`.
 - Baseline: `python eval/run_eval.py --tier 1`.
-- C5 / C4 / C6: `scratchpad/probe_tier3.py` (read-only; re-embeds queries via Ollama).
+- C5 / C4 / C6: `probe_tier3.py` (read-only; re-embeds queries via Ollama).
+- C3 + version-drift: `probe_c3.py` (rebuilds two temp DBs from the live chunk set,
+  control vs prefixed; reports recall@10 and the stored-vs-fresh cosine). Writes only
+  to temp DBs — the real `index.db` is untouched.
