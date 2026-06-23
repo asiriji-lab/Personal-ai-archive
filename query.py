@@ -54,9 +54,10 @@ def _warn_on_model_drift(conn: sqlite3.Connection) -> None:
 
     live = model_digest()
     if live and live != indexed_digest:
+        # ASCII only — this may print to a non-UTF-8 console (e.g. Windows cp874).
         print(
             f"WARNING: embed model '{EMBED_MODEL}' digest changed since indexing "
-            f"({indexed_digest[:12]}… → {live[:12]}…). Stored vectors are stale — "
+            f"({indexed_digest[:12]}... -> {live[:12]}...). Stored vectors are stale - "
             f"re-run `python embed.py --reset` to restore recall.",
             file=sys.stderr,
         )
