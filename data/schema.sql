@@ -6,8 +6,12 @@ CREATE TABLE IF NOT EXISTS chunks (
     id          INTEGER PRIMARY KEY,
     path        TEXT    NOT NULL,       -- relative to RESOURCES_PATH
     chunk_index INTEGER NOT NULL,
-    content     TEXT    NOT NULL,
+    content     TEXT    NOT NULL,       -- raw chunk text (clean for display)
     embedder    TEXT    NOT NULL,
+    title       TEXT,                   -- C1: document title (H1 / filename)
+    section     TEXT,                   -- C1: nearest H2/H3 heading ("" = preamble)
+    source      TEXT,                   -- C1: from YAML front-matter when present
+    date        TEXT,                   -- C1: from YAML front-matter when present
     indexed_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 

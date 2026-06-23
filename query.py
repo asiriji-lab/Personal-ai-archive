@@ -195,7 +195,7 @@ def search(query: str, k: int = TOPK) -> list[dict]:
         results = []
         for docid, rrf_score in fused:
             row = conn.execute(
-                "SELECT path, chunk_index, content FROM chunks WHERE id = ?",
+                "SELECT path, chunk_index, content, title, section FROM chunks WHERE id = ?",
                 (docid,),
             ).fetchone()
             if row:
@@ -204,6 +204,8 @@ def search(query: str, k: int = TOPK) -> list[dict]:
                         "path": row[0],
                         "chunk_index": row[1],
                         "content": row[2],
+                        "title": row[3],
+                        "section": row[4],
                         "rrf_score": rrf_score,
                     }
                 )

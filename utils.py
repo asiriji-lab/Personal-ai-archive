@@ -117,6 +117,33 @@ def chunk_text_sections(text: str, max_chars: int = 2000) -> list[str]:
     return chunks if chunks else [text]
 
 
+def chunk_with_headings(text: str, max_chars: int = 1500) -> list[tuple[str, str]]:
+    """Split text into (section, chunk) pairs for provenance-aware indexing (C1).
+
+    `section` is the nearest preceding H2/H3 heading text ("" for the preamble before
+    the first heading). Oversized sections fall back to chunk_text(), inheriting their
+    section label. With no headings, returns the plain chunk_text() output with "" labels.
+    """
+    heading_re = re.compile(r"^#{2,3}\s+(.+)$", re.MULTILINE)
+    matches = list(heading_re.finditer(text))
+    if not matches:
+        return [("", c) for c in chunk_text(text, max_chars)]
+
+    pairs: list[tuple[str, str]] = []
+    preamble = text[: matches[0].start()].strip()
+    if preamble:
+        pairs += [("", c) for c in chunk_text(preamble, max_chars)]
+
+    bounds = [m.start() for m in matches] + [len(text)]
+    for i, m in enumerate(matches):
+        section = m.group(1).strip()
+        body = text[bounds[i] : bounds[i + 1]].strip()
+        if body:
+            pairs += [(section, c) for c in chunk_text(body, max_chars)]
+
+    return pairs or [("", text)]
+
+
 # ──────────────────────────────────────────────
 # GPU MONITORING
 # ──────────────────────────────────────────────

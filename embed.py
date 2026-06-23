@@ -48,7 +48,13 @@ except ImportError:
     _MANIFEST_LOCK = None
 
 
-from utils import chunk_text, file_hash
+from utils import chunk_text, chunk_with_headings, file_hash
+
+
+def _doc_title(text: str, rel_path: str) -> str:
+    """Document title for the breadcrumb: first H1, falling back to the filename stem."""
+    m = re.search(r"^#\s+(.+)$", text, re.MULTILINE)
+    return m.group(1).strip() if m else Path(rel_path).stem
 
 
 def _load_manifest() -> dict[str, str]:
@@ -271,13 +277,22 @@ def index_resources(reset: bool = False) -> None:
             _save_manifest(manifest)
             continue
 
-        chunks = chunk_text(text, CHUNK_MAX_CHARS)
+        # C1: section-aware chunks + a "title › section" breadcrumb prepended to the
+        # embedded text so mid-document chunks carry their document/section identity.
+        # The raw chunk (no breadcrumb) is stored in `content` for clean display.
+        title = _doc_title(text, rel_path)
+        sectioned = chunk_with_headings(text, CHUNK_MAX_CHARS)
+        chunks = [c for _, c in sectioned]
+        embed_texts = [
+            f"{title} › {section}\n\n{c}" if section else f"{title}\n\n{c}"
+            for section, c in sectioned
+        ]
         embed_ok = True
         stored_count = 0
 
         if chunks:
             try:
-                embeddings = get_embeddings(chunks)
+                embeddings = get_embeddings(embed_texts)
             except Exception as e:
                 print(f"  EMBED ERROR in {rel_path}: {e}", file=sys.stderr)
                 embed_ok = False
@@ -294,10 +309,10 @@ def index_resources(reset: bool = False) -> None:
                 embeddings = []
 
             if embed_ok:
-                for idx, (chunk, emb) in enumerate(zip(chunks, embeddings)):
+                for idx, ((section, chunk), emb) in enumerate(zip(sectioned, embeddings)):
                     cur = conn.execute(
-                        "INSERT INTO chunks (path, chunk_index, content, embedder) VALUES (?, ?, ?, ?)",
-                        (rel_path, idx, chunk, EMBED_MODEL),
+                        "INSERT INTO chunks (path, chunk_index, content, embedder, title, section) VALUES (?, ?, ?, ?, ?, ?)",
+                        (rel_path, idx, chunk, EMBED_MODEL, title, section),
                     )
                     chunk_id = cur.lastrowid
 
