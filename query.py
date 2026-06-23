@@ -23,6 +23,11 @@ DB_PATH = PROJECT_ROOT / "data" / "index.db"
 TOPK = 10
 CANDIDATE_K = 10  # over-retrieve before RRF, then trim to TOPK
 
+# C6: relevance floor. Off-topic queries otherwise return 10 junk chunks. Calibrated
+# on the eval set: negatives top out at RRF ~0.0299, positives floor at ~0.0318.
+# If the best fused result is below this, the query has no relevant match.
+MIN_RRF_SCORE = 0.0308
+
 _drift_checked = False
 
 
@@ -182,6 +187,10 @@ def search(query: str, k: int = TOPK) -> list[dict]:
         vector_scores = vector_search(conn, query_emb, k=CANDIDATE_K)
         bm25_scores = bm25_search(conn, query, k=CANDIDATE_K)
         fused = reciprocal_rank_fusion(vector_scores, bm25_scores, k=k)
+
+        # C6: no result clears the relevance floor → "no relevant results".
+        if not fused or fused[0][1] < MIN_RRF_SCORE:
+            return []
 
         results = []
         for docid, rrf_score in fused:
