@@ -52,9 +52,6 @@ from config import (
     validate_paths,
 )
 
-# Shared sqlite-vec database — same file used by embed.py and vault_search
-_DB_PATH = Path(__file__).parent / "data" / "index.db"
-_SCHEMA_PATH = Path(__file__).parent / "data" / "schema.sql"
 from utils import chunk_text, chunk_text_sections, file_hash, setup_logging
 
 # ──────────────────────────────────────────────
@@ -335,69 +332,6 @@ async def get_rag():
 
 
 # ──────────────────────────────────────────────
-# PIPELINE B — FAST SQLITE-VEC INDEX
-# ──────────────────────────────────────────────
-async def _index_pipeline_b(chunks: list[str], path: str) -> None:
-    """Embed chunks and write to sqlite-vec (Tier 1). Does NOT call rag.ainsert()."""
-    import sqlite3
-
-    import numpy as np
-    import sqlite_vec
-
-    # Normalize to vault-relative POSIX path — consistent with embed.py and vault_search results
-    try:
-        rel_path = Path(path).relative_to(VAULT_PATH).as_posix()
-    except ValueError:
-        rel_path = Path(path).as_posix()
-
-    if not _SCHEMA_PATH.exists():
-        raise RuntimeError(
-            "Pipeline B requires data/schema.sql — run `python embed.py` first to initialize the sqlite-vec database."
-        )
-
-    # Embed all chunks in a single Ollama round-trip instead of one per chunk.
-    all_embeddings = await _local_embed(chunks)  # shape (N, 768)
-
-    def _write_to_db() -> None:
-        conn = sqlite3.connect(str(_DB_PATH))
-        try:
-            conn.execute("PRAGMA journal_mode=WAL")
-            conn.enable_load_extension(True)
-            sqlite_vec.load(conn)
-            conn.enable_load_extension(False)
-
-            # Apply schema idempotently (CREATE TABLE IF NOT EXISTS) so the DB self-initializes
-            conn.executescript(_SCHEMA_PATH.read_text(encoding="utf-8"))
-
-            cur = conn.cursor()
-
-            # Remove stale rows from a previous indexing pass for this file.
-            # vec_chunks has no CASCADE, so delete it first; chunks_fts triggers clean themselves.
-            cur.execute(
-                "DELETE FROM vec_chunks WHERE rowid IN (SELECT id FROM chunks WHERE path = ?)",
-                (rel_path,),
-            )
-            cur.execute("DELETE FROM chunks WHERE path = ?", (rel_path,))
-
-            for i, chunk in enumerate(chunks):
-                emb_bytes = all_embeddings[i].astype(np.float32).tobytes()
-                cur.execute(
-                    "INSERT INTO chunks(path, chunk_index, content, embedder) VALUES (?,?,?,?)",
-                    (rel_path, i, chunk, EMBED_MODEL),
-                )
-                rowid = cur.lastrowid
-                cur.execute(
-                    "INSERT INTO vec_chunks(rowid, embedding) VALUES (?,?)",
-                    (rowid, emb_bytes),
-                )
-            conn.commit()
-        finally:
-            conn.close()
-
-    await asyncio.to_thread(_write_to_db)
-
-
-# ──────────────────────────────────────────────
 # SINGLE FILE INDEXER (with retry)
 # ──────────────────────────────────────────────
 async def index_single_file(file_path: Path) -> None:
@@ -505,12 +439,14 @@ async def _index_single_file(
                     f"| kg_insert={t_done - t_insert:.1f}s | chunks={len(chunks)} | pipeline=A"
                 )
             else:
+                # Pipeline B = smaller chunks, but still LightRAG (Tier-2). Archives are
+                # NOT written to the sqlite-vec Tier-1 index (see embed.py docstring).
                 t_insert = time.perf_counter()
-                await _index_pipeline_b(chunks, file_path)
+                await rag.ainsert(chunks)
                 t_done = time.perf_counter()
                 logger.info(
                     f"[PHASE] {Path(file_path).name}: chunking={t_chunked - t_chunk:.1f}s "
-                    f"| embed+insert={t_done - t_insert:.1f}s | chunks={len(chunks)} | pipeline=B"
+                    f"| kg_insert={t_done - t_insert:.1f}s | chunks={len(chunks)} | pipeline=B"
                 )
 
             return True, "", content_type, pipeline

@@ -75,7 +75,8 @@
     "id": "recall_13",
     "query": "What tool uses tree-sitter AST analysis and the Leiden algorithm to generate a knowledge graph from a codebase?",
     "expected_paths": ["4. Archives/obscure tool/graphify.md"],
-    "type": "recall"
+    "type": "recall",
+    "expected_tier": 2
   },
   {
     "id": "recall_14",
@@ -99,7 +100,8 @@
     "id": "recall_17",
     "query": "What neural network basics are documented in the archives?",
     "expected_paths": ["4. Archives/Neural_Network_Basics.md"],
-    "type": "recall"
+    "type": "recall",
+    "expected_tier": 2
   },
   {
     "id": "negative_01",

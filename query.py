@@ -23,6 +23,37 @@ DB_PATH = PROJECT_ROOT / "data" / "index.db"
 TOPK = 10
 CANDIDATE_K = 10  # over-retrieve before RRF, then trim to TOPK
 
+_drift_checked = False
+
+
+def _warn_on_model_drift(conn: sqlite3.Connection) -> None:
+    """Warn once if the live embed model digest differs from the one indexed with.
+
+    Query vectors are embedded fresh; if the model changed under the same tag, the
+    stored vectors are in a different space and recall silently collapses (B4).
+    """
+    global _drift_checked
+    if _drift_checked:
+        return
+    _drift_checked = True
+    try:
+        row = conn.execute("SELECT value FROM index_meta WHERE key = 'embed_model_digest'").fetchone()
+    except sqlite3.OperationalError:
+        return  # pre-B4 index without index_meta — nothing to compare
+    indexed_digest = row[0] if row else ""
+    if not indexed_digest:
+        return
+    from embed import model_digest
+
+    live = model_digest()
+    if live and live != indexed_digest:
+        print(
+            f"WARNING: embed model '{EMBED_MODEL}' digest changed since indexing "
+            f"({indexed_digest[:12]}… → {live[:12]}…). Stored vectors are stale — "
+            f"re-run `python embed.py --reset` to restore recall.",
+            file=sys.stderr,
+        )
+
 
 # ──────────────────────────────────────────────
 # DB
@@ -127,6 +158,7 @@ def reciprocal_rank_fusion(
 def search(query: str, k: int = TOPK) -> list[dict]:
     conn = open_db()
     try:
+        _warn_on_model_drift(conn)
         query_emb = get_query_embedding(query)
         vector_scores = vector_search(conn, query_emb, k=CANDIDATE_K)
         bm25_scores = bm25_search(conn, query, k=CANDIDATE_K)

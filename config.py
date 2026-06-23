@@ -68,11 +68,13 @@ INDEX_RETRY_BACKOFF = [5, 15, 30]  # seconds between retries
 # ──────────────────────────────────────────────
 # VALIDATION
 # ──────────────────────────────────────────────
+# Archives (4. Archives) are NOT in the Tier-1 scan — they go through LightRAG
+# (index_archive.py). See embed.py docstring. ARCHIVE_PATH stays defined for
+# index_archive.py; it is just not indexed into sqlite-vec here.
 _SKELETON_DIRS = [
     VAULT_PATH / "1. Projects",
     VAULT_PATH / "2. Areas",
     RESOURCES_PATH,  # 3. Resources
-    ARCHIVE_PATH,  # 4. Archives
     VAULT_PATH / "system",
 ]
 

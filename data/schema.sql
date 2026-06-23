@@ -11,6 +11,14 @@ CREATE TABLE IF NOT EXISTS chunks (
     indexed_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Index-time metadata (one row per key). Used by query.py to detect embed-model
+-- drift: the model digest recorded here is compared against the live model at
+-- query time (closes B4 — stale-index version mismatch).
+CREATE TABLE IF NOT EXISTS index_meta (
+    key   TEXT PRIMARY KEY,
+    value TEXT
+);
+
 -- Virtual table for vector search (nomic-embed-text = 768 dims)
 CREATE VIRTUAL TABLE IF NOT EXISTS vec_chunks USING vec0(
     embedding float[768]

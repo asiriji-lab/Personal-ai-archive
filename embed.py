@@ -5,6 +5,8 @@ Scans markdown files in 3. Resources, chunks them, embeds via Ollama,
 and writes to index.db using sqlite-vec for vector search.
 
 Archives are NOT indexed here — they go through LightRAG (index_archive.py).
+ARCHIVE_PATH was removed from _SKELETON_DIRS (config.py) and pipeline B no longer
+writes to this Tier-1 index, so `4. Archives/*` is genuinely Tier-2-only.
 
 Uses a file-hash manifest for true incremental indexing:
   - New files are indexed
@@ -101,6 +103,25 @@ def get_embeddings(texts: list[str]) -> list[list[float]]:
 def pack_embedding(emb: list[float]) -> bytes:
     """Pack float list into bytes for sqlite-vec storage."""
     return struct.pack(f"{len(emb)}f", *emb)
+
+
+def model_digest(model: str = EMBED_MODEL) -> str:
+    """Digest (sha256) for the embed model from `ollama list`, or "" if unknown.
+
+    The Ollama tag (e.g. nomic-embed-text) can be re-pulled to a different build
+    under the same name; the digest is the only stable version identity. Tolerant
+    of both the object and dict shapes the ollama client has used across versions.
+    """
+    try:
+        resp = ollama.Client(host=OLLAMA_HOST).list()
+        models = getattr(resp, "models", None) or resp.get("models", [])
+        for m in models:
+            name = getattr(m, "model", None) or (m.get("model") or m.get("name") if isinstance(m, dict) else "")
+            if name == model or (name and name.split(":")[0] == model.split(":")[0]):
+                return getattr(m, "digest", None) or (m.get("digest", "") if isinstance(m, dict) else "") or ""
+    except Exception:
+        pass
+    return ""
 
 
 # ──────────────────────────────────────────────
@@ -271,6 +292,13 @@ def index_resources(reset: bool = False) -> None:
 
     # 4. Save final manifest (covers deletions)
     _save_manifest(manifest)
+
+    # Record embed-model identity so query.py can detect version drift (B4).
+    conn.execute(
+        "INSERT OR REPLACE INTO index_meta (key, value) VALUES ('embed_model', ?), ('embed_model_digest', ?)",
+        (EMBED_MODEL, model_digest()),
+    )
+    conn.commit()
 
     conn.close()
     print(f"\nDone. {len(to_index)} indexed, {len(deleted_paths)} purged, {total_chunks} total chunks -> {DB_PATH}")
