@@ -21,12 +21,14 @@ from config import EMBED_MODEL
 PROJECT_ROOT = Path(__file__).parent
 DB_PATH = PROJECT_ROOT / "data" / "index.db"
 TOPK = 10
-CANDIDATE_K = 10  # over-retrieve before RRF, then trim to TOPK
+CANDIDATE_K = 50  # over-retrieve before RRF, then trim to TOPK (C4)
 
-# C6: relevance floor. Off-topic queries otherwise return 10 junk chunks. Calibrated
-# on the eval set: negatives top out at RRF ~0.0299, positives floor at ~0.0318.
-# If the best fused result is below this, the query has no relevant match.
-MIN_RRF_SCORE = 0.0308
+# C6: relevance floor. Off-topic queries otherwise return junk chunks. Calibrated at
+# CANDIDATE_K=50: negatives top out at RRF ~0.03078, positives floor at ~0.03132 —
+# floor centred between them. NOTE: RRF scores cluster tightly (they encode rank
+# agreement, not similarity), so this margin is small; a raw vector-distance floor
+# would be more robust if the corpus grows. ponytail: revisit if negatives leak.
+MIN_RRF_SCORE = 0.0310
 
 _drift_checked = False
 
