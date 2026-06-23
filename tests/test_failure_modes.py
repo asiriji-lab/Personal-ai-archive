@@ -95,11 +95,11 @@ def test_d1_short_embedding_list_fails_file_no_silent_drop(tmp_path, monkeypatch
 
 # ── D2: non-UTF-8 file aborts the entire run ──────────────────────────────────
 
-def test_d2_non_utf8_file_aborts_run_with_unicodedecodeerror(tmp_path, monkeypatch):
+def test_d2_non_utf8_file_skipped_not_aborts_run(tmp_path, monkeypatch):
     """
-    A latin-1/binary .md raises UnicodeDecodeError (a ValueError subclass) on
-    read_text(encoding='utf-8'). The surrounding `except OSError` does not catch
-    it, so the whole index_resources run aborts with an uncaught traceback.
+    FIXED (D2): a non-UTF-8 .md raises UnicodeDecodeError (a ValueError, not an
+    OSError). The read guard now catches it, so the bad file is skipped and the run
+    completes — a good UTF-8 file alongside it still gets indexed.
     """
     vault, resources, data = _make_temp_vault(tmp_path)
     _patch_embed_paths(monkeypatch, vault, resources, data)
@@ -112,9 +112,15 @@ def test_d2_non_utf8_file_aborts_run_with_unicodedecodeerror(tmp_path, monkeypat
     with pytest.raises(UnicodeDecodeError):
         bad.read_text(encoding="utf-8")
 
-    # The run itself must propagate UnicodeDecodeError (NOT swallowed by except OSError).
-    with pytest.raises(UnicodeDecodeError):
-        embed.index_resources(reset=True)
+    # A valid file alongside the bad one, with a stub embedder (no Ollama).
+    good = resources / "good.md"
+    good.write_text("# Good\n\nAgents and planning patterns.", encoding="utf-8")
+    monkeypatch.setattr(embed, "get_embeddings", lambda texts: [[0.0] * 768 for _ in texts])
 
-    # And it is NOT an OSError, proving the existing guard cannot catch it.
-    assert not issubclass(UnicodeDecodeError, OSError)
+    # The run must NOT raise — the bad file is skipped, not fatal.
+    embed.index_resources(reset=True)
+
+    import json
+    manifest = json.loads((data / "embed_manifest.json").read_text(encoding="utf-8"))
+    assert "3. Resources/good.md" in manifest, "valid file must still be indexed"
+    assert "3. Resources/latin1.md" not in manifest, "non-UTF-8 file must be skipped, not indexed"

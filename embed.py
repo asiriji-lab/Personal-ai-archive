@@ -259,7 +259,9 @@ def index_resources(reset: bool = False) -> None:
 
         try:
             text = abs_path.read_text(encoding="utf-8")
-        except OSError as e:
+        except (OSError, UnicodeDecodeError) as e:
+            # D2: UnicodeDecodeError is a ValueError, not an OSError. Catching only
+            # OSError let one non-UTF-8 file abort the whole run. Skip+log like Tier-2.
             print(f"  SKIP (read error): {rel_path} — {e}")
             continue
 
