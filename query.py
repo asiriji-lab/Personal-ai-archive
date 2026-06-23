@@ -105,10 +105,29 @@ def vector_search(conn: sqlite3.Connection, query_emb: bytes, k: int = TOPK) -> 
 # ──────────────────────────────────────────────
 # BM25 SEARCH (via FTS5 — O(log n) SQL query)
 # ──────────────────────────────────────────────
+# Common query words that carry no retrieval signal. Quoting + AND-ing these (the
+# old behavior) meant a doc had to contain EVERY word, so verbose questions matched
+# nothing — BM25 was dead on 19/20 eval queries (C5).
+_STOPWORDS = {
+    "a", "an", "the", "and", "or", "of", "to", "for", "in", "on", "at", "by", "from",
+    "with", "as", "is", "are", "was", "were", "be", "been", "being", "do", "does",
+    "did", "what", "how", "why", "when", "where", "which", "who", "whom", "whose",
+    "this", "that", "these", "those", "i", "you", "it", "its", "we", "they", "he",
+    "she", "can", "could", "should", "would", "will", "shall", "may", "might", "must",
+    "about", "into", "over", "than", "then", "so", "if", "but", "not", "no", "yes",
+}
+
+
 def _fts5_query(text: str) -> str:
-    """Sanitize text for FTS5 MATCH. Wraps each word token in quotes."""
-    tokens = re.findall(r"\w+", text)
-    return " ".join(f'"{t}"' for t in tokens if t)
+    """Build an FTS5 MATCH expression with OR semantics over significant tokens.
+
+    Drops stopwords (keeping rare/specific terms) and OR-joins the rest so any
+    matching term contributes — restoring BM25's rare-term/acronym path. Falls back
+    to OR over all tokens when the query is entirely stopwords.
+    """
+    tokens = re.findall(r"\w+", text.lower())
+    significant = [t for t in tokens if t not in _STOPWORDS] or tokens
+    return " OR ".join(f'"{t}"' for t in significant)
 
 
 def bm25_search(conn: sqlite3.Connection, query: str, k: int = TOPK) -> dict[int, float]:
