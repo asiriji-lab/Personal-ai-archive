@@ -11,7 +11,6 @@ Features:
 
 import asyncio
 import glob
-import hashlib
 import json
 import logging
 import os
@@ -109,10 +108,12 @@ def _load_failures() -> dict:
 
 def _save_failures(failures: dict) -> None:
     FAILURES_PATH.parent.mkdir(parents=True, exist_ok=True)
-    FAILURES_PATH.write_text(
+    tmp = FAILURES_PATH.with_suffix(".tmp")
+    tmp.write_text(
         json.dumps(failures, indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
+    tmp.replace(FAILURES_PATH)
 
 
 # ──────────────────────────────────────────────
@@ -357,40 +358,43 @@ async def _index_pipeline_b(chunks: list[str], path: str) -> None:
     # Embed all chunks in a single Ollama round-trip instead of one per chunk.
     all_embeddings = await _local_embed(chunks)  # shape (N, 768)
 
-    conn = sqlite3.connect(str(_DB_PATH))
-    try:
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.enable_load_extension(True)
-        sqlite_vec.load(conn)
-        conn.enable_load_extension(False)
+    def _write_to_db() -> None:
+        conn = sqlite3.connect(str(_DB_PATH))
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.enable_load_extension(True)
+            sqlite_vec.load(conn)
+            conn.enable_load_extension(False)
 
-        # Apply schema idempotently (CREATE TABLE IF NOT EXISTS) so the DB self-initializes
-        conn.executescript(_SCHEMA_PATH.read_text(encoding="utf-8"))
+            # Apply schema idempotently (CREATE TABLE IF NOT EXISTS) so the DB self-initializes
+            conn.executescript(_SCHEMA_PATH.read_text(encoding="utf-8"))
 
-        cur = conn.cursor()
+            cur = conn.cursor()
 
-        # Remove stale rows from a previous indexing pass for this file.
-        # vec_chunks has no CASCADE, so delete it first; chunks_fts triggers clean themselves.
-        cur.execute(
-            "DELETE FROM vec_chunks WHERE rowid IN (SELECT id FROM chunks WHERE path = ?)",
-            (rel_path,),
-        )
-        cur.execute("DELETE FROM chunks WHERE path = ?", (rel_path,))
-
-        for i, chunk in enumerate(chunks):
-            emb_bytes = all_embeddings[i].astype(np.float32).tobytes()
+            # Remove stale rows from a previous indexing pass for this file.
+            # vec_chunks has no CASCADE, so delete it first; chunks_fts triggers clean themselves.
             cur.execute(
-                "INSERT INTO chunks(path, chunk_index, content, embedder) VALUES (?,?,?,?)",
-                (rel_path, i, chunk, EMBED_MODEL),
+                "DELETE FROM vec_chunks WHERE rowid IN (SELECT id FROM chunks WHERE path = ?)",
+                (rel_path,),
             )
-            rowid = cur.lastrowid
-            cur.execute(
-                "INSERT INTO vec_chunks(rowid, embedding) VALUES (?,?)",
-                (rowid, emb_bytes),
-            )
-        conn.commit()
-    finally:
-        conn.close()
+            cur.execute("DELETE FROM chunks WHERE path = ?", (rel_path,))
+
+            for i, chunk in enumerate(chunks):
+                emb_bytes = all_embeddings[i].astype(np.float32).tobytes()
+                cur.execute(
+                    "INSERT INTO chunks(path, chunk_index, content, embedder) VALUES (?,?,?,?)",
+                    (rel_path, i, chunk, EMBED_MODEL),
+                )
+                rowid = cur.lastrowid
+                cur.execute(
+                    "INSERT INTO vec_chunks(rowid, embedding) VALUES (?,?)",
+                    (rowid, emb_bytes),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+
+    await asyncio.to_thread(_write_to_db)
 
 
 # ──────────────────────────────────────────────
@@ -415,7 +419,11 @@ async def index_single_file(file_path: Path) -> None:
     manifest = _load_manifest()
     failures = _load_failures()
 
-    success, error_msg, content_type, pipeline = await _index_single_file(rag, fp)
+    try:
+        success, error_msg, content_type, pipeline = await _index_single_file(rag, fp)
+    except BaseException:
+        _save_manifest(manifest)  # flush whatever completed before cancellation
+        raise
 
     if success:
         manifest[fp] = {
@@ -705,6 +713,23 @@ async def query_archive(query: str) -> str:
 test_query = query_archive
 
 
+def get_brain_counts() -> dict:
+    """Return document and entity counts from LightRAG KV-store files.
+    Centralised here so callers don't hardcode filenames that may change across LightRAG versions.
+    """
+    def _count(path, corrupt_msg="unknown"):
+        if not path.exists():
+            return 0
+        try:
+            return len(json.loads(path.read_text(encoding="utf-8")))
+        except (json.JSONDecodeError, OSError):
+            return corrupt_msg
+    return {
+        "indexed_documents": _count(WORKING_DIR / "kv_store_doc_status.json", "unknown (corrupt status file)"),
+        "entities": _count(WORKING_DIR / "kv_store_full_entities.json"),
+    }
+
+
 # ──────────────────────────────────────────────
 # LOCK FILE  (heartbeat-based, self-healing)
 # ──────────────────────────────────────────────
@@ -712,14 +737,6 @@ _LOCK_FILE = Path(__file__).parent / ".indexer.lock"
 _HEARTBEAT_INTERVAL = 30   # seconds between writes
 _HEARTBEAT_STALE = 120     # seconds before lock is considered dead
 _stop_heartbeat = threading.Event()
-
-
-def _write_lock() -> None:
-    _LOCK_FILE.write_text(json.dumps({
-        "pid": os.getpid(),
-        "started": datetime.now(timezone.utc).isoformat(),
-        "heartbeat": datetime.now(timezone.utc).isoformat(),
-    }))
 
 
 def _heartbeat_loop() -> None:
@@ -792,6 +809,9 @@ if __name__ == "__main__":
         logger.info(f"Provider overridden via CLI: {_cfg.LLM_PROVIDER}")
 
     import atexit
+    # heartbeat is intentionally "" here — _lock_is_stale() skips the age check when
+    # the value is falsy, preventing a false-stale result before the heartbeat thread
+    # writes its first real timestamp.
     _LOCK_FILE.write_text(
         json.dumps({"pid": os.getpid(), "started": datetime.now(timezone.utc).isoformat(), "heartbeat": ""}),
         encoding="utf-8",

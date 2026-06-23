@@ -22,7 +22,7 @@ from fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 
 from config import LLM_PROVIDER, RESOURCES_PATH, VAULT_PATH, WORKING_DIR, is_safe_path, validate_paths
-from index_archive import get_rag, query_archive, test_query
+from index_archive import get_brain_counts, get_rag, query_archive
 from query import search as hybrid_search
 from utils import get_gpu_stats, sanitize_filename, setup_logging
 
@@ -138,26 +138,16 @@ def save_active_note(title: str, content: str) -> str:
         return json.dumps({"error": str(e), "tool": "save_active_note"})
 
 
-def _count_json_entries(path, corrupt_msg="unknown"):
-    if not path.exists():
-        return 0
-    try:
-        return len(json.loads(path.read_text(encoding="utf-8")))
-    except (json.JSONDecodeError, OSError):
-        return corrupt_msg
-
-
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, idempotentHint=True))
 def brain_status() -> str:
     """Get the current health status of the Brain (indexed docs, GPU, provider mode)."""
+    counts = get_brain_counts()
     status = {
         "provider": LLM_PROVIDER,
         "working_dir": str(WORKING_DIR),
         "gpu": get_gpu_stats(),
-        "indexed_documents": _count_json_entries(
-            WORKING_DIR / "kv_store_doc_status.json", "unknown (corrupt status file)"
-        ),
-        "entities": _count_json_entries(WORKING_DIR / "kv_store_full_entities.json"),
+        "indexed_documents": counts["indexed_documents"],
+        "entities": counts["entities"],
     }
     return json.dumps(status, indent=2, default=str)
 

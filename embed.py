@@ -78,6 +78,7 @@ def get_embeddings(texts: list[str]) -> list[list[float]]:
     """Get embedding vectors from Ollama in batch. Returns a list of flat lists of floats."""
     if not texts:
         return []
+    client = ollama.Client(host=OLLAMA_HOST)
     try:
         # ollama >= 0.2 API supports batching
         # To avoid exceeding context length on very large files, limit batch size
@@ -85,14 +86,14 @@ def get_embeddings(texts: list[str]) -> list[list[float]]:
         all_embeddings = []
         for i in range(0, len(texts), BATCH_SIZE):
             batch = texts[i : i + BATCH_SIZE]
-            resp = ollama.embed(model=EMBED_MODEL, input=batch)
+            resp = client.embed(model=EMBED_MODEL, input=batch)
             all_embeddings.extend(resp["embeddings"])
         return all_embeddings
     except (AttributeError, KeyError):
         # fallback for older API without native batching
         embs = []
         for text in texts:
-            resp = ollama.embeddings(model=EMBED_MODEL, prompt=text)
+            resp = client.embeddings(model=EMBED_MODEL, prompt=text)
             embs.append(resp["embedding"])
         return embs
 
@@ -281,7 +282,6 @@ def index_resources(reset: bool = False) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Index Resources into sqlite-vec.")
     parser.add_argument("--reset", action="store_true", help="Drop and rebuild index from scratch.")
-    parser.add_argument("--resume", action="store_true", help="Resume an interrupted indexing run (default behavior).")
     args = parser.parse_args()
 
     index_resources(reset=args.reset)

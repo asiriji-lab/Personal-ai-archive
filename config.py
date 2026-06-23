@@ -68,15 +68,6 @@ INDEX_RETRY_BACKOFF = [5, 15, 30]  # seconds between retries
 # ──────────────────────────────────────────────
 # VALIDATION
 # ──────────────────────────────────────────────
-from typing import TypedDict
-
-
-class RAGConfig(TypedDict):
-    working_dir: str
-    llm_provider: str
-    chunk_max_chars: int
-
-
 _SKELETON_DIRS = [
     VAULT_PATH / "1. Projects",
     VAULT_PATH / "2. Areas",

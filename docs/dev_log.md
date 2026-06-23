@@ -1,7 +1,7 @@
 # ZeroCostBrain — Developer Log
 
 > For the next AI, the next human, or whoever is crazy enough to read this.
-> Written after Sprint 1. Last updated: 2026-05-17 (audit + bug fixes + OpenBLAS hang).
+> Written after Sprint 1. Last updated: 2026-05-29 (adversarial audit — 10 fixes across 4 files).
 
 ---
 
@@ -704,6 +704,104 @@ if (wasLive) {
 - Pre-existing test collection error: pytest collects `test_query` (imported alias for `query_archive`) in `test_brain.py` as a test function and looks for a `query` fixture. Fix: rename `test_query` in `index_archive.py` to a non-`test_` name, or remove the re-export.
 - `ruff.toml` keeps F401 (unused imports) suppressed — enabling it generates too much noise. Deferred to a dedicated import-cleanup sprint.
 - Large-function refactor for `sigma_hud.py` (JS/CSS embedded in Python strings) deferred — would require splitting into separate asset files, changing the build pipeline.
+
+---
+
+## Adversarial Code Audit — 2026-05-29
+
+Multi-agent workflow: 4 independent scanners ran in parallel (dead code, bug patterns, critical bugs, architecture), each with a 90–95% certainty threshold. Each raw finding was then challenged by a dedicated skeptic agent whose default stance was "refuted" — it read the full function and caller chain before confirming. Only findings the skeptic could not refute with confidence ≥ 0.75 were escalated to severity triage, where any finding whose failure mode used "might" or "could possibly" was dropped.
+
+**12 raw findings → 2 refuted → 10 confirmed → 0 critical, 0 high, 4 medium, 6 low**
+
+Full report: `docs/AUDIT_REPORT.md`
+
+---
+
+### Fix A1 — `index_archive.py`: Synchronous SQLite Blocks Event Loop in `_index_pipeline_b` (Medium)
+
+**Problem**: `_index_pipeline_b` is `async def` but called `sqlite3.connect()`, `conn.executescript()`, and `conn.commit()` directly on the event loop. During Pipeline B indexing (news articles, personal notes), the entire asyncio event loop was blocked for the duration of the SQLite write, stalling LightRAG's own pending coroutines.
+
+**Fix**: Extracted the SQLite block into an inner sync function `_write_to_db()` and called it via `await asyncio.to_thread(_write_to_db)`. Consistent with the `asyncio.to_thread` convention documented in `brain_server.py`.
+
+---
+
+### Fix A2 — `index_archive.py`: Non-Atomic Write in `_save_failures` (Medium)
+
+**Problem**: `_save_failures()` wrote directly to `FAILURES_PATH` via `.write_text()`. If the process was killed mid-write (SIGKILL, OOM), the file was left partially written. On the next run, `_load_failures()` caught the `JSONDecodeError` and returned `{}`, silently erasing all failure history. Previously-exhausted files would be retried from scratch, potentially triggering redundant LLM calls.
+
+`_save_manifest()` immediately above it already used the correct atomic tmp+rename pattern — this was a simple inconsistency.
+
+**Fix**: Applied the same pattern: write to a `.tmp` file, then `tmp.replace(FAILURES_PATH)`.
+
+---
+
+### Fix A3 — `index_archive.py`: `CancelledError` Bypasses Manifest Save in `index_single_file` (Medium)
+
+**Problem**: `index_single_file()` (the public single-file API used by `validate_and_archive.py`) had no protection against asyncio task cancellation. If `CancelledError` was raised inside `await _index_single_file(rag, fp)` — for example from Ctrl-C while `rag.ainsert()` was running internally — the `_save_manifest()` call in the success branch was never reached, even if prior files in a batch had been successfully indexed. The manifest on disk would not reflect completed work.
+
+**Fix**: Wrapped the `await _index_single_file(...)` call in `try/except BaseException: _save_manifest(manifest); raise` — the manifest is flushed before any cancellation propagates.
+
+---
+
+### Fix A4 — `brain_server.py`: `brain_status()` Hardcodes LightRAG KV-Store Filenames (Medium)
+
+**Problem**: `brain_status()` read `kv_store_doc_status.json` and `kv_store_full_entities.json` by name directly. No function in `index_archive.py` encapsulated these filenames. If LightRAG renames or restructures its KV-store layout in a future version, `brain_status()` silently returns `{"indexed_documents": 0, "entities": 0}` — indistinguishable from a genuinely empty brain, with no error or warning.
+
+**Fix**: Added `get_brain_counts()` to `index_archive.py`. Both the KV-store filenames and the count logic now live in one place. `brain_server.py` imports and calls it; `_count_json_entries()` helper was removed.
+
+**Note on `brain_explorer.py`**: It also reads KV-store files but uses its own `load_json()` abstraction for full-content display (entities/relations for visualization), not counts — different enough use case that it does not need to call `get_brain_counts()`.
+
+---
+
+### Fix A5 — `embed.py`: `OLLAMA_HOST` Ignored in `get_embeddings()` (Low)
+
+**Problem**: `embed.py` imported `OLLAMA_HOST` from config but called `ollama.embed()` (module-level default client) without passing a host. Any user setting `OLLAMA_HOST` to a non-default address in `.env` got embeddings silently generated against `localhost:11434` regardless.
+
+**Fix**: Created `ollama.Client(host=OLLAMA_HOST)` at the start of `get_embeddings()` and called `client.embed()` / `client.embeddings()` through it.
+
+---
+
+### Fix A6 — `config.py`: `RAGConfig` TypedDict Was Dead Scaffolding (Low)
+
+**Problem**: `RAGConfig` TypedDict and its `TypedDict` import existed only in `config.py` and were never referenced anywhere in the project. Readers could assume it was the typed config interface and write code against it — none of which would be enforced.
+
+**Fix**: Removed `from typing import TypedDict` and the `RAGConfig` class entirely.
+
+---
+
+### Fix A7 — `index_archive.py`: `import hashlib` Unused (Low)
+
+**Problem**: `import hashlib` appeared at module level but no `hashlib` symbol was called anywhere in the file. All hashing is done via `file_hash` imported from `utils.py`.
+
+**Fix**: Removed the import.
+
+---
+
+### Fix A8 — `index_archive.py`: `_write_lock()` Dead with Subtly Wrong Semantics (Low)
+
+**Problem**: `_write_lock()` was defined but never called. The live CLI entry point at the bottom of the file duplicated its logic inline, but with `heartbeat: ""` (empty string) instead of a real ISO timestamp. This is intentional: `_lock_is_stale()` skips the age check when `heartbeat` is falsy, preventing a false-stale result before the heartbeat thread writes its first real timestamp. `_write_lock()` wrote a real timestamp immediately, so wiring it in would cause the lock to be immediately detectable as stale by another process before the heartbeat thread fires.
+
+**Fix**: Deleted `_write_lock()`. Added a comment at the inline lock write explaining the intentional empty-string heartbeat, so no future developer "cleans it up" by introducing the function again.
+
+---
+
+### Fix A9 — `brain_server.py`: `test_query` Imported but Unused in Server (Low)
+
+**Problem**: `test_query` (deprecated alias for `query_archive`, defined in `index_archive.py`) was pulled into `brain_server.py`'s namespace but never called there. It falsely implied the alias was part of the server's active API surface.
+
+**Note**: This also fixes a pre-existing test collection warning — pytest sees `test_query` exported from `index_archive` and tries to collect it as a test function, then fails looking for a `query` fixture.
+
+**Fix**: Removed `test_query` from the import line in `brain_server.py`.
+
+---
+
+### Fix A10 — `embed.py`: `--resume` CLI Flag Was a Silent No-Op (Low)
+
+**Problem**: The argument parser declared `--resume` with a help string describing resume behavior, but `args.resume` was never read and `index_resources()` has no resume parameter. Users who passed `--resume` got no error, no acknowledgment, and identical behavior to a plain run. Misleading help text.
+
+**Note**: The prior "Phase 3 Sprint" entry in this log describes adding `--resume` as a fix — the flag was added to the parser but the implementation was never wired in.
+
+**Fix**: Removed the `--resume` argument definition. The default incremental behavior (skip unchanged files via manifest) already covers the resume case.
 
 ---
 
