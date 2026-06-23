@@ -31,7 +31,7 @@ from pathlib import Path
 import ollama
 import sqlite_vec
 
-from config import _SKELETON_DIRS, CHUNK_MAX_CHARS, EMBED_MODEL, OLLAMA_HOST, RESOURCES_PATH, VAULT_PATH
+from config import _SKELETON_DIRS, CHUNK_MAX_CHARS, EMBED_MODEL, INDEX_FAILURES_FILE, OLLAMA_HOST, RESOURCES_PATH, VAULT_PATH
 
 # ──────────────────────────────────────────────
 # PATHS
@@ -60,6 +60,20 @@ def _load_manifest() -> dict[str, str]:
             except (json.JSONDecodeError, OSError):
                 print("  WARNING: Corrupt embed manifest — will re-index everything.")
     return {}
+
+
+def _record_failure(rel_path: str, reason: str) -> None:
+    """Append a {path: reason} entry to data/index_failures.json (atomic write)."""
+    path = MANIFEST_PATH.parent / INDEX_FAILURES_FILE
+    try:
+        failures = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    except (json.JSONDecodeError, OSError):
+        failures = {}
+    failures[rel_path] = reason
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(failures, indent=2, ensure_ascii=False), encoding="utf-8")
+    tmp.replace(path)
 
 
 def _save_manifest(manifest: dict[str, str]) -> None:
@@ -264,6 +278,16 @@ def index_resources(reset: bool = False) -> None:
                 embeddings = get_embeddings(chunks)
             except Exception as e:
                 print(f"  EMBED ERROR in {rel_path}: {e}", file=sys.stderr)
+                embed_ok = False
+                embeddings = []
+
+            # D1: a short embedding list would silently truncate via zip() and the
+            # file would still be marked complete. Fail the file instead so it is
+            # retried next run and recorded for diagnosis — never a silent recall hole.
+            if embed_ok and len(embeddings) != len(chunks):
+                msg = f"embedding count {len(embeddings)} != chunk count {len(chunks)}"
+                print(f"  EMBED MISMATCH in {rel_path}: {msg}", file=sys.stderr)
+                _record_failure(rel_path, msg)
                 embed_ok = False
                 embeddings = []
 

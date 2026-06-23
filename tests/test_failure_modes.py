@@ -47,11 +47,11 @@ def _patch_embed_paths(monkeypatch, vault, resources, data):
 
 # ── D1: silent chunk drop when embeddings are short ───────────────────────────
 
-def test_d1_short_embedding_list_silently_drops_chunks(tmp_path, monkeypatch):
+def test_d1_short_embedding_list_fails_file_no_silent_drop(tmp_path, monkeypatch):
     """
-    If get_embeddings returns fewer vectors than chunks, zip() truncates and the
-    trailing chunk(s) are never stored — but the file is still marked complete in
-    the manifest and NO exception is raised.
+    FIXED (D1): if get_embeddings returns fewer vectors than chunks, embed.py must
+    store nothing for the file, leave it OUT of the manifest (so it is retried), and
+    record it in index_failures.json — never silently truncate + mark it complete.
     """
     vault, resources, data = _make_temp_vault(tmp_path)
     _patch_embed_paths(monkeypatch, vault, resources, data)
@@ -72,26 +72,25 @@ def test_d1_short_embedding_list_silently_drops_chunks(tmp_path, monkeypatch):
 
     monkeypatch.setattr(embed, "get_embeddings", fake_get_embeddings)
 
-    # Must complete without raising.
+    # Must complete without raising (one bad file doesn't abort the run).
     embed.index_resources(reset=True)
 
-    # Stored count is short by exactly the dropped chunk(s).
+    # Nothing stored for the mismatched file — no partial/silent write.
     conn = sqlite3.connect(str(data / "index.db"))
     stored = conn.execute(
         "SELECT COUNT(*) FROM chunks WHERE path = ?", ("3. Resources/multi.md",)
     ).fetchone()[0]
     conn.close()
+    assert stored == 0, f"mismatched file must store nothing, got {stored}"
 
-    assert stored == len(produced) - 1, (
-        f"expected silent drop: stored={stored}, produced={len(produced)}"
-    )
-
-    # ...yet the manifest records the file as fully indexed (the lie).
+    # File is NOT in the manifest, so the next run retries it.
     import json
     manifest = json.loads((data / "embed_manifest.json").read_text(encoding="utf-8"))
-    assert "3. Resources/multi.md" in manifest, (
-        "file marked complete despite dropped chunks — no retry will ever happen"
-    )
+    assert "3. Resources/multi.md" not in manifest, "mismatched file must not be marked complete"
+
+    # And it is recorded in index_failures.json for diagnosis.
+    failures = json.loads((data / embed.INDEX_FAILURES_FILE).read_text(encoding="utf-8"))
+    assert "3. Resources/multi.md" in failures, "mismatched file must be logged as a failure"
 
 
 # ── D2: non-UTF-8 file aborts the entire run ──────────────────────────────────
