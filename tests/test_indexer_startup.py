@@ -178,9 +178,11 @@ def test_lightrag_constructor_does_not_hang(tmp_path, monkeypatch):
     async def run():
         with patch("index_archive.validate_paths"):
             with patch("index_archive._setup_provider", return_value=provider):
-                with patch("index_archive.EmbeddingFunc") as mock_efunc:
+                # LightRAG / EmbeddingFunc are imported lazily inside get_rag(), so
+                # patch them at their source module, not as index_archive attributes.
+                with patch("lightrag.utils.EmbeddingFunc") as mock_efunc:
                     mock_efunc.return_value = MagicMock()
-                    with patch("index_archive.LightRAG") as MockRAG:
+                    with patch("lightrag.LightRAG") as MockRAG:
                         MockRAG.return_value = MagicMock()
                         MockRAG.return_value.initialize_storages = AsyncMock()
                         return await asyncio.wait_for(
@@ -220,8 +222,9 @@ def test_initialize_storages_does_not_call_embed(tmp_path, monkeypatch):
             with patch("index_archive._setup_provider", return_value={
                 "func": AsyncMock(), "name": "m", "max_async": 1, "kwargs": {}
             }):
-                with patch("index_archive.LightRAG", return_value=rag_mock):
-                    with patch("index_archive.EmbeddingFunc", return_value=MagicMock()):
+                # Patch at the lazy-import source (see note in the constructor test).
+                with patch("lightrag.LightRAG", return_value=rag_mock):
+                    with patch("lightrag.utils.EmbeddingFunc", return_value=MagicMock()):
                         rag = await get_rag()
                         await rag.initialize_storages()
                         return embed_calls
