@@ -159,6 +159,7 @@ class TestBuildLayoutContent:
     def test_slot1_swap_visible_in_render(self, monkeypatch):
         """Smoke-test: layout renders Graph Watchdog text when indexer running."""
         import io
+
         from rich.console import Console
 
         monkeypatch.setattr(brain_tui, "_is_indexer_running", lambda: True)

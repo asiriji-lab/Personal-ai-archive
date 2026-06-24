@@ -247,7 +247,8 @@ class TestVRAMSizing:
 
     def test_nomic_embed_cpu_uses_zero_vram(self):
         """After loading nomic-embed-text-cpu, it must appear in /api/ps with 0 VRAM."""
-        import urllib.request, time
+        import time
+        import urllib.request
 
         if not _ollama_reachable():
             pytest.skip("Ollama not running")
@@ -276,8 +277,8 @@ class TestVRAMSizing:
             pytest.skip("Ollama not running")
 
         try:
-            import ollama
             import numpy as np
+            import ollama
             client = ollama.Client(host=OLLAMA_HOST)
             result = client.embed(model="nomic-embed-text-cpu", input=["hello world"])
             vec = np.array(result["embeddings"][0])

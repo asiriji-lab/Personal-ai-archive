@@ -10,11 +10,12 @@ from collections import defaultdict
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
 
+# CONFIG — resolve paths from config to avoid working-directory dependency
+from config import WORKING_DIR
+
 # Import Sigma HUD
 from sigma_hud import build_sigma_css, build_sigma_html, build_sigma_js
 
-# CONFIG — resolve paths from config to avoid working-directory dependency
-from config import WORKING_DIR
 _PROJECT_ROOT = Path(__file__).parent
 GRAPHML_PATH = WORKING_DIR / "graph_chunk_entity_relation.graphml"
 OUTPUT_PATH = _PROJECT_ROOT / "docs" / "brain_graph_sigma.html"

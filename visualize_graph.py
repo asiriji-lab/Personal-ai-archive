@@ -23,10 +23,10 @@ import xml.etree.ElementTree as ET
 from collections import defaultdict
 from pathlib import Path
 
+from graph_hud import EDGE_COLOR, EDGE_HIGHLIGHT, build_css, build_html, build_js
 from pyvis.network import Network
 
 from config import WORKING_DIR
-from graph_hud import EDGE_COLOR, EDGE_HIGHLIGHT, build_css, build_html, build_js
 
 # ──────────────────────────────────────────────
 # PATHS

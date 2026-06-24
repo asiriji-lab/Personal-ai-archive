@@ -21,7 +21,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import index_archive
 from index_archive import _index_single_file, _prepend_frontmatter
 
-
 # ── _prepend_frontmatter ──────────────────────────────────────────────────────
 
 def test_prepend_frontmatter_writes_timestamp(tmp_path):

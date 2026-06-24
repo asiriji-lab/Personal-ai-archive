@@ -2,7 +2,6 @@ from pathlib import Path
 
 from index_archive import _classify_content_type, _select_pipeline
 
-
 # ── _classify_content_type ─────────────────────────────────────────────────
 
 def test_classify_fetch_papers_path():

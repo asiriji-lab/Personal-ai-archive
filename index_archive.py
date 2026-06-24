@@ -14,20 +14,19 @@ import glob
 import json
 import logging
 import os
-import shutil
-import sys
-import threading
-import time
-from pathlib import Path
 
 # LightRAG and its LLM adapters are imported lazily inside get_rag() /
 # _setup_provider() / query_archive() so that `import index_archive` itself
 # is fast. Importing LightRAG at module level triggers Google/Ollama SDK
 # initialisation (auth probes, DNS lookups) that can block for minutes and
 # cause the indexer subprocess to appear hung before any log line appears.
-
 import re
+import shutil
+import sys
+import threading
+import time
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Literal
 
 from config import (
@@ -51,7 +50,6 @@ from config import (
     WORKING_DIR,
     validate_paths,
 )
-
 from utils import chunk_text, chunk_text_sections, file_hash, setup_logging
 
 # ──────────────────────────────────────────────

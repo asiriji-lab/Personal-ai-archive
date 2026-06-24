@@ -31,7 +31,15 @@ from pathlib import Path
 import ollama
 import sqlite_vec
 
-from config import _SKELETON_DIRS, CHUNK_MAX_CHARS, EMBED_MODEL, INDEX_FAILURES_FILE, OLLAMA_HOST, RESOURCES_PATH, VAULT_PATH
+from config import (
+    _SKELETON_DIRS,
+    CHUNK_MAX_CHARS,
+    EMBED_MODEL,
+    INDEX_FAILURES_FILE,
+    OLLAMA_HOST,
+    RESOURCES_PATH,
+    VAULT_PATH,
+)
 
 # ──────────────────────────────────────────────
 # PATHS
