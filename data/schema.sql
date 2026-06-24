@@ -6,9 +6,21 @@ CREATE TABLE IF NOT EXISTS chunks (
     id          INTEGER PRIMARY KEY,
     path        TEXT    NOT NULL,       -- relative to RESOURCES_PATH
     chunk_index INTEGER NOT NULL,
-    content     TEXT    NOT NULL,
+    content     TEXT    NOT NULL,       -- raw chunk text (clean for display)
     embedder    TEXT    NOT NULL,
+    title       TEXT,                   -- C1: document title (H1 / filename)
+    section     TEXT,                   -- C1: nearest H2/H3 heading ("" = preamble)
+    source      TEXT,                   -- C1: from YAML front-matter when present
+    date        TEXT,                   -- C1: from YAML front-matter when present
     indexed_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Index-time metadata (one row per key). Used by query.py to detect embed-model
+-- drift: the model digest recorded here is compared against the live model at
+-- query time (closes B4 — stale-index version mismatch).
+CREATE TABLE IF NOT EXISTS index_meta (
+    key   TEXT PRIMARY KEY,
+    value TEXT
 );
 
 -- Virtual table for vector search (nomic-embed-text = 768 dims)

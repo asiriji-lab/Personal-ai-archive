@@ -1,0 +1,126 @@
+"""
+Fault-injection tests for the failure-mode VERIFICATION sprint.
+
+These do not fix anything — they PROVE two silent Tier-1 (embed.py) failure
+modes from docs/failure-mode-research.md are real and deterministic:
+
+  D1 — Embedding count < chunk count silently drops the trailing chunks, yet the
+       file is still recorded in the manifest as fully indexed (embed.py:250-266).
+  D2 — A non-UTF-8 (.md) file raises UnicodeDecodeError, which is a ValueError and
+       therefore NOT caught by the `except OSError` guard, aborting the whole run
+       (embed.py:226-229).
+
+Both tests are hermetic: a temp vault + monkeypatched module globals, no Ollama,
+no touching the real data/index.db.
+"""
+import sqlite3
+import sys
+from pathlib import Path
+
+import pytest
+
+# Ensure project root is on sys.path when running from the tests/ subdirectory
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+import embed
+from utils import chunk_text
+
+
+def _make_temp_vault(tmp_path: Path):
+    """Build a minimal vault skeleton and point embed.py's globals at it."""
+    vault = tmp_path / "vault"
+    resources = vault / "3. Resources"
+    resources.mkdir(parents=True)
+    data = tmp_path / "data"
+    data.mkdir()
+    return vault, resources, data
+
+
+def _patch_embed_paths(monkeypatch, vault, resources, data):
+    monkeypatch.setattr(embed, "VAULT_PATH", vault)
+    monkeypatch.setattr(embed, "RESOURCES_PATH", resources)
+    monkeypatch.setattr(embed, "_SKELETON_DIRS", [resources])
+    monkeypatch.setattr(embed, "DB_PATH", data / "index.db")
+    monkeypatch.setattr(embed, "MANIFEST_PATH", data / "embed_manifest.json")
+    # SCHEMA_PATH stays pointed at the real data/schema.sql (read-only).
+
+
+# ── D1: silent chunk drop when embeddings are short ───────────────────────────
+
+def test_d1_short_embedding_list_fails_file_no_silent_drop(tmp_path, monkeypatch):
+    """
+    FIXED (D1): if get_embeddings returns fewer vectors than chunks, embed.py must
+    store nothing for the file, leave it OUT of the manifest (so it is retried), and
+    record it in index_failures.json — never silently truncate + mark it complete.
+    """
+    vault, resources, data = _make_temp_vault(tmp_path)
+    _patch_embed_paths(monkeypatch, vault, resources, data)
+
+    # Build a doc that produces several chunks (paragraphs > CHUNK_MAX_CHARS total).
+    paras = [f"Paragraph {i}. " + ("filler sentence. " * 40) for i in range(6)]
+    text = "\n\n".join(paras)
+    md = resources / "multi.md"
+    md.write_text(text, encoding="utf-8")
+
+    produced = chunk_text(text, embed.CHUNK_MAX_CHARS)
+    assert len(produced) >= 3, f"need a multi-chunk doc; got {len(produced)} chunks"
+
+    # Inject the fault: return one FEWER 768-dim vector than there are chunks.
+    def fake_get_embeddings(texts):
+        n = len(texts) - 1
+        return [[0.0] * 768 for _ in range(n)]
+
+    monkeypatch.setattr(embed, "get_embeddings", fake_get_embeddings)
+
+    # Must complete without raising (one bad file doesn't abort the run).
+    embed.index_resources(reset=True)
+
+    # Nothing stored for the mismatched file — no partial/silent write.
+    conn = sqlite3.connect(str(data / "index.db"))
+    stored = conn.execute(
+        "SELECT COUNT(*) FROM chunks WHERE path = ?", ("3. Resources/multi.md",)
+    ).fetchone()[0]
+    conn.close()
+    assert stored == 0, f"mismatched file must store nothing, got {stored}"
+
+    # File is NOT in the manifest, so the next run retries it.
+    import json
+    manifest = json.loads((data / "embed_manifest.json").read_text(encoding="utf-8"))
+    assert "3. Resources/multi.md" not in manifest, "mismatched file must not be marked complete"
+
+    # And it is recorded in index_failures.json for diagnosis.
+    failures = json.loads((data / embed.INDEX_FAILURES_FILE).read_text(encoding="utf-8"))
+    assert "3. Resources/multi.md" in failures, "mismatched file must be logged as a failure"
+
+
+# ── D2: non-UTF-8 file aborts the entire run ──────────────────────────────────
+
+def test_d2_non_utf8_file_skipped_not_aborts_run(tmp_path, monkeypatch):
+    """
+    FIXED (D2): a non-UTF-8 .md raises UnicodeDecodeError (a ValueError, not an
+    OSError). The read guard now catches it, so the bad file is skipped and the run
+    completes — a good UTF-8 file alongside it still gets indexed.
+    """
+    vault, resources, data = _make_temp_vault(tmp_path)
+    _patch_embed_paths(monkeypatch, vault, resources, data)
+
+    # 0xE9 ('é' in latin-1) followed by a continuation-less byte → invalid UTF-8.
+    bad = resources / "latin1.md"
+    bad.write_bytes(b"Caf\xe9 notes about agents. " * 5)
+
+    # Guard: confirm it really is invalid UTF-8 (so the test asserts the right cause).
+    with pytest.raises(UnicodeDecodeError):
+        bad.read_text(encoding="utf-8")
+
+    # A valid file alongside the bad one, with a stub embedder (no Ollama).
+    good = resources / "good.md"
+    good.write_text("# Good\n\nAgents and planning patterns.", encoding="utf-8")
+    monkeypatch.setattr(embed, "get_embeddings", lambda texts: [[0.0] * 768 for _ in texts])
+
+    # The run must NOT raise — the bad file is skipped, not fatal.
+    embed.index_resources(reset=True)
+
+    import json
+    manifest = json.loads((data / "embed_manifest.json").read_text(encoding="utf-8"))
+    assert "3. Resources/good.md" in manifest, "valid file must still be indexed"
+    assert "3. Resources/latin1.md" not in manifest, "non-UTF-8 file must be skipped, not indexed"

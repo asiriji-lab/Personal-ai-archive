@@ -5,6 +5,8 @@ Scans markdown files in 3. Resources, chunks them, embeds via Ollama,
 and writes to index.db using sqlite-vec for vector search.
 
 Archives are NOT indexed here — they go through LightRAG (index_archive.py).
+ARCHIVE_PATH was removed from _SKELETON_DIRS (config.py) and pipeline B no longer
+writes to this Tier-1 index, so `4. Archives/*` is genuinely Tier-2-only.
 
 Uses a file-hash manifest for true incremental indexing:
   - New files are indexed
@@ -17,6 +19,7 @@ Usage:
 """
 
 import argparse
+import contextlib
 import hashlib
 import json
 import re
@@ -28,7 +31,15 @@ from pathlib import Path
 import ollama
 import sqlite_vec
 
-from config import _SKELETON_DIRS, CHUNK_MAX_CHARS, EMBED_MODEL, OLLAMA_HOST, RESOURCES_PATH, VAULT_PATH
+from config import (
+    _SKELETON_DIRS,
+    CHUNK_MAX_CHARS,
+    EMBED_MODEL,
+    INDEX_FAILURES_FILE,
+    OLLAMA_HOST,
+    RESOURCES_PATH,
+    VAULT_PATH,
+)
 
 # ──────────────────────────────────────────────
 # PATHS
@@ -38,29 +49,56 @@ DB_PATH = PROJECT_ROOT / "data" / "index.db"
 SCHEMA_PATH = PROJECT_ROOT / "data" / "schema.sql"
 MANIFEST_PATH = PROJECT_ROOT / "data" / "embed_manifest.json"
 
+try:
+    from filelock import FileLock
+    _MANIFEST_LOCK = FileLock(str(MANIFEST_PATH) + ".lock", timeout=30)
+except ImportError:
+    _MANIFEST_LOCK = None
 
-from utils import chunk_text, file_hash
+
+from utils import chunk_text, chunk_with_headings, file_hash
+
+
+def _doc_title(text: str, rel_path: str) -> str:
+    """Document title for the breadcrumb: first H1, falling back to the filename stem."""
+    m = re.search(r"^#\s+(.+)$", text, re.MULTILINE)
+    return m.group(1).strip() if m else Path(rel_path).stem
 
 
 def _load_manifest() -> dict[str, str]:
     """Load {relative_path: md5_hash} from disk."""
-    if MANIFEST_PATH.exists():
-        try:
-            return json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            print("  WARNING: Corrupt embed manifest — will re-index everything.")
+    with (_MANIFEST_LOCK if _MANIFEST_LOCK else contextlib.nullcontext()):
+        if MANIFEST_PATH.exists():
+            try:
+                return json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                print("  WARNING: Corrupt embed manifest — will re-index everything.")
     return {}
+
+
+def _record_failure(rel_path: str, reason: str) -> None:
+    """Append a {path: reason} entry to data/index_failures.json (atomic write)."""
+    path = MANIFEST_PATH.parent / INDEX_FAILURES_FILE
+    try:
+        failures = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    except (json.JSONDecodeError, OSError):
+        failures = {}
+    failures[rel_path] = reason
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(failures, indent=2, ensure_ascii=False), encoding="utf-8")
+    tmp.replace(path)
 
 
 def _save_manifest(manifest: dict[str, str]) -> None:
     MANIFEST_PATH.parent.mkdir(parents=True, exist_ok=True)
-    # Atomic save to prevent corruption on interrupt
-    temp_path = MANIFEST_PATH.with_suffix(".tmp")
-    temp_path.write_text(
-        json.dumps(manifest, indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
-    temp_path.replace(MANIFEST_PATH)
+    with (_MANIFEST_LOCK if _MANIFEST_LOCK else contextlib.nullcontext()):
+        temp_path = MANIFEST_PATH.with_suffix(".tmp")
+        temp_path.write_text(
+            json.dumps(manifest, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        temp_path.replace(MANIFEST_PATH)
 
 
 # ──────────────────────────────────────────────
@@ -70,6 +108,7 @@ def get_embeddings(texts: list[str]) -> list[list[float]]:
     """Get embedding vectors from Ollama in batch. Returns a list of flat lists of floats."""
     if not texts:
         return []
+    client = ollama.Client(host=OLLAMA_HOST)
     try:
         # ollama >= 0.2 API supports batching
         # To avoid exceeding context length on very large files, limit batch size
@@ -77,14 +116,14 @@ def get_embeddings(texts: list[str]) -> list[list[float]]:
         all_embeddings = []
         for i in range(0, len(texts), BATCH_SIZE):
             batch = texts[i : i + BATCH_SIZE]
-            resp = ollama.embed(model=EMBED_MODEL, input=batch)
+            resp = client.embed(model=EMBED_MODEL, input=batch)
             all_embeddings.extend(resp["embeddings"])
         return all_embeddings
     except (AttributeError, KeyError):
         # fallback for older API without native batching
         embs = []
         for text in texts:
-            resp = ollama.embeddings(model=EMBED_MODEL, prompt=text)
+            resp = client.embeddings(model=EMBED_MODEL, prompt=text)
             embs.append(resp["embedding"])
         return embs
 
@@ -92,6 +131,25 @@ def get_embeddings(texts: list[str]) -> list[list[float]]:
 def pack_embedding(emb: list[float]) -> bytes:
     """Pack float list into bytes for sqlite-vec storage."""
     return struct.pack(f"{len(emb)}f", *emb)
+
+
+def model_digest(model: str = EMBED_MODEL) -> str:
+    """Digest (sha256) for the embed model from `ollama list`, or "" if unknown.
+
+    The Ollama tag (e.g. nomic-embed-text) can be re-pulled to a different build
+    under the same name; the digest is the only stable version identity. Tolerant
+    of both the object and dict shapes the ollama client has used across versions.
+    """
+    try:
+        resp = ollama.Client(host=OLLAMA_HOST).list()
+        models = getattr(resp, "models", None) or resp.get("models", [])
+        for m in models:
+            name = getattr(m, "model", None) or (m.get("model") or m.get("name") if isinstance(m, dict) else "")
+            if name == model or (name and name.split(":")[0] == model.split(":")[0]):
+                return getattr(m, "digest", None) or (m.get("digest", "") if isinstance(m, dict) else "") or ""
+    except Exception:
+        pass
+    return ""
 
 
 # ──────────────────────────────────────────────
@@ -123,7 +181,11 @@ def open_db(reset: bool = False) -> sqlite3.Connection:
         if chunks_count > 0:
             conn.execute("INSERT INTO chunks_fts(chunks_fts) VALUES ('rebuild')")
             conn.commit()
-            print(f"  FTS5: rebuilt index over {chunks_count} existing chunks.")
+            rebuilt_count = conn.execute("SELECT COUNT(*) FROM chunks_fts").fetchone()[0]
+            if rebuilt_count != chunks_count:
+                print(f"  WARNING: FTS5 rebuild mismatch — expected {chunks_count}, got {rebuilt_count}. Search may be incomplete.", file=sys.stderr)
+            else:
+                print(f"  FTS5: rebuilt index over {chunks_count} existing chunks.")
 
     return conn
 
@@ -211,7 +273,9 @@ def index_resources(reset: bool = False) -> None:
 
         try:
             text = abs_path.read_text(encoding="utf-8")
-        except OSError as e:
+        except (OSError, UnicodeDecodeError) as e:
+            # D2: UnicodeDecodeError is a ValueError, not an OSError. Catching only
+            # OSError let one non-UTF-8 file abort the whole run. Skip+log like Tier-2.
             print(f"  SKIP (read error): {rel_path} — {e}")
             continue
 
@@ -221,23 +285,42 @@ def index_resources(reset: bool = False) -> None:
             _save_manifest(manifest)
             continue
 
-        chunks = chunk_text(text, CHUNK_MAX_CHARS)
+        # C1: section-aware chunks + a "title › section" breadcrumb prepended to the
+        # embedded text so mid-document chunks carry their document/section identity.
+        # The raw chunk (no breadcrumb) is stored in `content` for clean display.
+        title = _doc_title(text, rel_path)
+        sectioned = chunk_with_headings(text, CHUNK_MAX_CHARS)
+        chunks = [c for _, c in sectioned]
+        embed_texts = [
+            f"{title} › {section}\n\n{c}" if section else f"{title}\n\n{c}"
+            for section, c in sectioned
+        ]
         embed_ok = True
         stored_count = 0
 
         if chunks:
             try:
-                embeddings = get_embeddings(chunks)
+                embeddings = get_embeddings(embed_texts)
             except Exception as e:
                 print(f"  EMBED ERROR in {rel_path}: {e}", file=sys.stderr)
                 embed_ok = False
                 embeddings = []
 
+            # D1: a short embedding list would silently truncate via zip() and the
+            # file would still be marked complete. Fail the file instead so it is
+            # retried next run and recorded for diagnosis — never a silent recall hole.
+            if embed_ok and len(embeddings) != len(chunks):
+                msg = f"embedding count {len(embeddings)} != chunk count {len(chunks)}"
+                print(f"  EMBED MISMATCH in {rel_path}: {msg}", file=sys.stderr)
+                _record_failure(rel_path, msg)
+                embed_ok = False
+                embeddings = []
+
             if embed_ok:
-                for idx, (chunk, emb) in enumerate(zip(chunks, embeddings)):
+                for idx, ((section, chunk), emb) in enumerate(zip(sectioned, embeddings)):
                     cur = conn.execute(
-                        "INSERT INTO chunks (path, chunk_index, content, embedder) VALUES (?, ?, ?, ?)",
-                        (rel_path, idx, chunk, EMBED_MODEL),
+                        "INSERT INTO chunks (path, chunk_index, content, embedder, title, section) VALUES (?, ?, ?, ?, ?, ?)",
+                        (rel_path, idx, chunk, EMBED_MODEL, title, section),
                     )
                     chunk_id = cur.lastrowid
 
@@ -259,6 +342,13 @@ def index_resources(reset: bool = False) -> None:
     # 4. Save final manifest (covers deletions)
     _save_manifest(manifest)
 
+    # Record embed-model identity so query.py can detect version drift (B4).
+    conn.execute(
+        "INSERT OR REPLACE INTO index_meta (key, value) VALUES ('embed_model', ?), ('embed_model_digest', ?)",
+        (EMBED_MODEL, model_digest()),
+    )
+    conn.commit()
+
     conn.close()
     print(f"\nDone. {len(to_index)} indexed, {len(deleted_paths)} purged, {total_chunks} total chunks -> {DB_PATH}")
 
@@ -269,7 +359,6 @@ def index_resources(reset: bool = False) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Index Resources into sqlite-vec.")
     parser.add_argument("--reset", action="store_true", help="Drop and rebuild index from scratch.")
-    parser.add_argument("--resume", action="store_true", help="Resume an interrupted indexing run (default behavior).")
     args = parser.parse_args()
 
     index_resources(reset=args.reset)

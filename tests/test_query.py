@@ -21,6 +21,11 @@ def test_rrf_scoring():
 
 
 def test_fts5_query_sanitization():
-    assert _fts5_query("hello world") == '"hello" "world"'
-    assert _fts5_query("special-characters!") == '"special" "characters"'
+    # C5: OR semantics over significant tokens (was implicit AND of quoted tokens).
+    assert _fts5_query("hello world") == '"hello" OR "world"'
+    assert _fts5_query("special-characters!") == '"special" OR "characters"'
     assert _fts5_query("") == ""
+    # stopwords dropped; rare term kept
+    assert _fts5_query("what is the orchestrator") == '"orchestrator"'
+    # all-stopwords falls back to OR over all tokens (never empty match)
+    assert _fts5_query("what is the") == '"what" OR "is" OR "the"'

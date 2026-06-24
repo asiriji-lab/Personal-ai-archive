@@ -23,7 +23,7 @@ async def run_query(query: str):
     """Execute a single query against the Archive Brain."""
     print(f"\n🔍 Reasoning about: '{query}'...")
 
-    rag = get_rag()
+    rag = await get_rag()
     await rag.initialize_storages()
 
     answer = await test_query(query)
@@ -35,7 +35,7 @@ async def run_query(query: str):
 
 async def interactive_mode():
     """Loop for multiple queries without restarting."""
-    rag = get_rag()
+    rag = await get_rag()
     await rag.initialize_storages()
     print("✅ Brain online. Type 'quit' to exit.\n")
 

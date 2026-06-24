@@ -84,6 +84,66 @@ def chunk_text(text: str, max_chars: int = 1500) -> list[str]:
     return chunks
 
 
+def chunk_text_sections(text: str, max_chars: int = 2000) -> list[str]:
+    """
+    Split on H2/H3 heading boundaries (## / ###).
+    Falls back to chunk_text() for oversized sections.
+    Always prepends a summary chunk: first paragraph + all headings joined.
+    Returns [text] unchanged when no headings are found.
+    """
+    heading_re = re.compile(r"^(#{2,3} .+)$", re.MULTILINE)
+    positions = [m.start() for m in heading_re.finditer(text)]
+
+    if not positions:
+        return chunk_text(text, max_chars)
+
+    headings = [text[m.start():m.end()] for m in heading_re.finditer(text)]
+    preamble = text[: positions[0]].strip()
+    first_para = (preamble.split("\n\n")[0] if preamble else "").strip()
+    summary = "\n".join(filter(None, [first_para] + headings))
+
+    boundaries = positions + [len(text)]
+    sections = [text[boundaries[i] : boundaries[i + 1]].strip() for i in range(len(positions))]
+
+    chunks = [summary] if summary else []
+    for section in sections:
+        if not section:
+            continue
+        if len(section) <= max_chars:
+            chunks.append(section)
+        else:
+            chunks.extend(chunk_text(section, max_chars))
+
+    return chunks if chunks else [text]
+
+
+def chunk_with_headings(text: str, max_chars: int = 1500) -> list[tuple[str, str]]:
+    """Split text into (section, chunk) pairs for provenance-aware indexing (C1).
+
+    `section` is the nearest preceding H2/H3 heading text ("" for the preamble before
+    the first heading). Oversized sections fall back to chunk_text(), inheriting their
+    section label. With no headings, returns the plain chunk_text() output with "" labels.
+    """
+    heading_re = re.compile(r"^#{2,3}\s+(.+)$", re.MULTILINE)
+    matches = list(heading_re.finditer(text))
+    if not matches:
+        return [("", c) for c in chunk_text(text, max_chars)]
+
+    pairs: list[tuple[str, str]] = []
+    preamble = text[: matches[0].start()].strip()
+    if preamble:
+        pairs += [("", c) for c in chunk_text(preamble, max_chars)]
+
+    bounds = [m.start() for m in matches] + [len(text)]
+    for i, m in enumerate(matches):
+        section = m.group(1).strip()
+        body = text[bounds[i] : bounds[i + 1]].strip()
+        if body:
+            pairs += [(section, c) for c in chunk_text(body, max_chars)]
+
+    return pairs or [("", text)]
+
+
 # ──────────────────────────────────────────────
 # GPU MONITORING
 # ──────────────────────────────────────────────

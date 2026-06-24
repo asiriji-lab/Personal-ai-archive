@@ -71,7 +71,13 @@ async def run_eval(queries_path: Path, tier: str) -> None:
 
 async def _run_eval_tier1(queries: list[dict]) -> None:
     recall_scores, precision_scores, latencies, _failures = [], [], [], []
+    skipped = 0
     for q in queries:
+        # Archives are Tier-2 (LightRAG) only — not servable by Tier-1 by design (B1).
+        if q.get("expected_tier") == 2:
+            skipped += 1
+            print(f"[{q['id']}] SKIP    (tier-2/archive — not a Tier-1 recall query)")
+            continue
         t0 = time.perf_counter()
         results = search_tier1(q["query"])
         latency = time.perf_counter() - t0
@@ -94,7 +100,7 @@ async def _run_eval_tier1(queries: list[dict]) -> None:
     avg_precision = sum(precision_scores) / len(precision_scores) if precision_scores else 0.0
 
     print(f"\n{'=' * 50}")
-    print(f"Recall@10    : {avg_recall:.3f} (threshold {PASS_THRESHOLD})")
+    print(f"Recall@10    : {avg_recall:.3f} (threshold {PASS_THRESHOLD}, over {len(recall_scores)} queries, {skipped} tier-2 skipped)")
     print(f"Precision@10 : {avg_precision:.3f}")
     print(f"Latency      : Avg={avg_latency:.2f}s  p50={p50:.2f}s  p95={p95:.2f}s")
 

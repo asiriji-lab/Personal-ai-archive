@@ -11,13 +11,19 @@ Usage:
 """
 
 import argparse
+import http.server
+import json
+import math
 import os
+import socketserver
+import threading
 import time
 import webbrowser
 import xml.etree.ElementTree as ET
 from collections import defaultdict
 from pathlib import Path
 
+from graph_hud import EDGE_COLOR, EDGE_HIGHLIGHT, build_css, build_html, build_js
 from pyvis.network import Network
 
 from config import WORKING_DIR
@@ -97,36 +103,132 @@ def _node_color(node: dict) -> str:
 
 
 # ──────────────────────────────────────────────
-# RENDERER
+# DATA PREPARATION
 # ──────────────────────────────────────────────
-def render(top_n: int = 200, open_browser: bool = True) -> bool:
-    """
-    Parse graphml and render to HTML.
-    Returns True if graph had content, False if empty.
-    """
+def _prepare_graph_data(top_n: int):
     if not GRAPHML_PATH.exists():
-        print(f"Graph file not found: {GRAPHML_PATH}")
-        print("Run `python index_archive.py` first to build the knowledge graph.")
-        return False
+        return None
 
     nodes, edges = _parse_graphml(GRAPHML_PATH)
-
     if not nodes:
-        print("Graph is empty — no entities indexed yet.")
-        print("Run `python index_archive.py` to populate the graph.")
-        return False
+        return None
 
-    # Compute degree for each node to size and rank them
     degree: dict[str, int] = defaultdict(int)
     for e in edges:
         degree[e["source"]] += 1
         degree[e["target"]] += 1
 
-    # Keep top_n nodes by degree
     sorted_nodes = sorted(nodes, key=lambda n: degree[n["id"]], reverse=True)
     kept_ids = {n["id"] for n in sorted_nodes[:top_n]}
     filtered_nodes = [n for n in sorted_nodes if n["id"] in kept_ids]
     filtered_edges = [e for e in edges if e["source"] in kept_ids and e["target"] in kept_ids]
+    return filtered_nodes, filtered_edges, degree
+
+
+# ──────────────────────────────────────────────
+# JSON GENERATION (DELTA DATA)
+# ──────────────────────────────────────────────
+def generate_json(top_n: int = 1000) -> bool:
+    data = _prepare_graph_data(top_n)
+    if not data:
+        return False
+    filtered_nodes, filtered_edges, degree = data
+
+    vis_nodes = []
+    for node in filtered_nodes:
+        nid = node["id"]
+        deg = degree[nid]
+        # Logarithmic sizing feels more natural for 5k+ nodes
+        size = max(10, min(50, 10 + (math.log(deg + 1) * 8)))
+        color = _node_color(node)
+        desc = node.get("description") or node.get("entity_type") or ""
+        tooltip = f"<b>{nid}</b><br>{desc[:200]}" if desc else f"<b>{nid}</b>"
+
+        # Smarter label suppression: hide labels for low-degree nodes if the graph is huge
+        is_large_view = top_n > 500
+        show_label = deg > 1 if is_large_view else True
+
+        label = nid if show_label else ""
+        font_size = max(12, min(20, 11 + deg)) if show_label else 0
+
+        vis_nodes.append({
+            "id": nid,
+            "label": label,
+            "title": tooltip,
+            "size": size,
+            "color": {"background": color, "border": color, "highlight": {"background": "#ffffff", "border": "#ffffff"}},
+            "borderWidth": 2,
+            "font": {"size": font_size, "color": "#e2e8f0", "strokeWidth": 2, "strokeColor": "#0d1117"},
+            "_defaultColor": {"background": color, "border": color, "highlight": {"background": "#ffffff", "border": "#ffffff"}},
+            "_defaultSize": size
+        })
+
+    vis_edges = []
+    for edge in filtered_edges:
+        desc = edge.get("description") or edge.get("relation") or ""
+        tooltip = desc[:150] if desc else ""
+        vis_edges.append({
+            "id": f"{edge['source']}--{edge['target']}",
+            "from": edge["source"],
+            "to": edge["target"],
+            "title": tooltip,
+            "_defaultColor": {"color": EDGE_COLOR, "highlight": EDGE_HIGHLIGHT},
+            "_defaultWidth": 1
+        })
+
+    output = {"nodes": vis_nodes, "edges": vis_edges}
+
+    json_path = PROJECT_ROOT / "docs" / "graph_data.json"
+    json_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = json_path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(output, indent=2), encoding="utf-8")
+    tmp.replace(json_path)
+    return True
+
+
+# ──────────────────────────────────────────────
+# LOCAL SERVER
+# ──────────────────────────────────────────────
+def start_server(port=8000):
+    docs_dir = PROJECT_ROOT / "docs"
+    class Handler(http.server.SimpleHTTPRequestHandler):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, directory=str(docs_dir), **kwargs)
+
+        def log_message(self, format, *args):
+            pass # Suppress HTTP logs to keep console clean
+
+    socketserver.TCPServer.allow_reuse_address = True
+    try:
+        httpd = socketserver.TCPServer(("", port), Handler)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        print(f"Local server started at http://localhost:{port}/brain_graph.html")
+        return httpd
+    except Exception as e:
+        print(f"Failed to start local server on port {port}: {e}")
+        return None
+
+
+# ──────────────────────────────────────────────
+# RENDERER
+# ──────────────────────────────────────────────
+def render(top_n: int = 1000, open_browser: bool = True) -> bool:
+    """
+    Parse graphml and render to HTML.
+    Returns True if graph had content, False if empty.
+    """
+    data = _prepare_graph_data(top_n)
+    if not data:
+        print(f"Graph file not found or empty: {GRAPHML_PATH}")
+        print("Run `python index_archive.py` first to build the knowledge graph.")
+        return False
+
+    filtered_nodes, filtered_edges, degree = data
+
+    # Performance tuning for large graphs
+    node_count = len(filtered_nodes)
+    is_large = node_count > 500
 
     # ── Build pyvis network ──
     net = Network(
@@ -137,57 +239,56 @@ def render(top_n: int = 200, open_browser: bool = True) -> bool:
         directed=False,
     )
 
-    net.set_options("""
-    {
+    net.set_options(json.dumps({
       "physics": {
-        "enabled": true,
-        "forceAtlas2Based": {
-          "gravitationalConstant": -60,
-          "centralGravity": 0.005,
-          "springLength": 120,
-          "springConstant": 0.08,
-          "damping": 0.6
+        "enabled": True,
+        "solver": "barnesHut",
+        "barnesHut": {
+          "gravitationalConstant": -60000 if is_large else -2000,
+          "centralGravity": 0.3,
+          "springLength": 200 if is_large else 95,
+          "springConstant": 0.001 if is_large else 0.04,
+          "damping": 0.2,
+          "avoidOverlap": 0.2 if is_large else 0
         },
-        "solver": "forceAtlas2Based",
-        "stabilization": { "iterations": 150 }
+        "stabilization": {
+          "enabled": True,
+          "iterations": 1000 if is_large else 200,
+          "updateInterval": 50,
+          "onlyDynamicEdges": False,
+          "fit": True
+        }
       },
       "edges": {
-        "color": { "color": "#1e293b", "highlight": "#475569" },
+        "color": { "color": "#2d3a4a", "highlight": "#64748b" },
         "width": 1,
-        "smooth": { "type": "continuous" }
+        "smooth": { "enabled": False }
       },
       "nodes": {
         "borderWidth": 0,
-        "shadow": { "enabled": true, "color": "rgba(0,0,0,0.5)", "size": 8 }
+        "shadow": { "enabled": False }
       },
       "interaction": {
-        "hover": true,
+        "hover": True,
         "tooltipDelay": 100,
-        "navigationButtons": true,
-        "keyboard": true
+        "hideEdgesOnDrag": False,
+        "hideEdgesOnZoom": False,
+        "navigationButtons": False,
+        "keyboard": True
       }
-    }
-    """)
+    }))
 
     for node in filtered_nodes:
         nid = node["id"]
         deg = degree[nid]
-        size = max(8, min(40, 8 + deg * 2))
+        size = max(10, min(50, 10 + (math.log(deg + 1) * 8)))
         color = _node_color(node)
         desc = node.get("description") or node.get("entity_type") or ""
         tooltip = f"<b>{nid}</b><br>{desc[:200]}" if desc else f"<b>{nid}</b>"
 
-        # Truncate with ellipsis; hide label entirely for leaf nodes to reduce clutter
-        max_chars = 22
-        if len(nid) > max_chars:
-            label = nid[: max_chars - 1] + "…"
-        else:
-            label = nid
-        font_size = max(11, min(16, 10 + deg))
-        # Suppress label for very low-degree nodes — tooltip still works on hover
-        if deg == 0:
-            label = ""
-            font_size = 0
+        show_label = deg > 1 if is_large else True
+        label = nid if show_label else ""
+        font_size = max(12, min(20, 11 + deg)) if show_label else 0
 
         net.add_node(
             nid,
@@ -202,73 +303,26 @@ def render(top_n: int = 200, open_browser: bool = True) -> bool:
     for edge in filtered_edges:
         desc = edge.get("description") or edge.get("relation") or ""
         tooltip = desc[:150] if desc else ""
-        net.add_edge(edge["source"], edge["target"], title=tooltip)
+        net.add_edge(edge["source"], edge["target"], id=f"{edge['source']}--{edge['target']}", title=tooltip)
 
     # ── Write HTML ──
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     net.save_graph(str(OUTPUT_PATH))
 
-    # Inject title + timestamp into the HTML
+    # ── Inject custom HUD overlay ──
     html = OUTPUT_PATH.read_text(encoding="utf-8")
     stamp = time.strftime("%Y-%m-%d %H:%M:%S")
-    badge = (
-        f'<div style="position:fixed;top:12px;left:12px;z-index:999;'
-        f"background:#111827;border:1px solid #1e293b;border-radius:6px;"
-        f'padding:8px 14px;font-family:monospace;font-size:12px;color:#64748b;">'
-        f"🧠 ZeroCostBrain Graph &nbsp;·&nbsp; "
-        f"{len(filtered_nodes)} nodes &nbsp;·&nbsp; "
-        f"{len(filtered_edges)} edges &nbsp;·&nbsp; "
-        f"Updated {stamp}</div>"
-    )
-    html = html.replace("<body>", f"<body>{badge}", 1)
 
-    # Inject double-click focus: dim unconnected nodes/edges on node double-click,
-    # double-click background to reset.
-    hover_js = """
-<script type="text/javascript">
-(function waitForNetwork() {
-  if (typeof network === "undefined" || typeof nodes === "undefined") {
-    setTimeout(waitForNetwork, 100);
-    return;
-  }
-  var _edgeDefaultColor = "#1e293b";
-  var _focused = false;
+    hud_css = f"<style>{build_css()}</style>"
+    hud_html = build_html(len(filtered_nodes), len(filtered_edges), stamp)
+    hud_js = build_js()
 
-  function focusNode(nodeId) {
-    var connected = new Set(network.getConnectedNodes(nodeId));
-    var connEdges = new Set(network.getConnectedEdges(nodeId));
-    connected.add(nodeId);
-    nodes.update(nodes.get().map(function(n) {
-      return { id: n.id, opacity: connected.has(n.id) ? 1.0 : 0.06 };
-    }));
-    edges.update(edges.get().map(function(e) {
-      return connEdges.has(e.id)
-        ? { id: e.id, color: { color: "#94a3b8" }, width: 2.5 }
-        : { id: e.id, color: { color: _edgeDefaultColor, opacity: 0.04 }, width: 0.5 };
-    }));
-    _focused = true;
-  }
-
-  function resetAll() {
-    nodes.update(nodes.get().map(function(n) { return { id: n.id, opacity: 1.0 }; }));
-    edges.update(edges.get().map(function(e) { return { id: e.id, color: { color: _edgeDefaultColor }, width: 1 }; }));
-    _focused = false;
-  }
-
-  network.on("doubleClick", function(params) {
-    if (params.nodes && params.nodes.length > 0) {
-      focusNode(params.nodes[0]);
-    } else {
-      resetAll();
-    }
-  });
-})();
-</script>
-"""
-    html = html.replace("</body>", hover_js + "</body>", 1)
+    html = html.replace("</style>", f"</style>{hud_css}", 1)
+    html = html.replace("<body>", f"<body>{hud_html}", 1)
+    html = html.replace("</body>", hud_js + "</body>", 1)
     OUTPUT_PATH.write_text(html, encoding="utf-8")
 
-    print(f"Graph rendered: {len(filtered_nodes)} nodes, {len(filtered_edges)} edges → {OUTPUT_PATH}")
+    print(f"Graph rendered: {len(filtered_nodes)} nodes, {len(filtered_edges)} edges -> {OUTPUT_PATH}")
 
     if open_browser:
         webbrowser.open(OUTPUT_PATH.as_uri())
@@ -279,14 +333,30 @@ def render(top_n: int = 200, open_browser: bool = True) -> bool:
 # ──────────────────────────────────────────────
 # WATCH MODE
 # ──────────────────────────────────────────────
-def watch(top_n: int = 200, poll_seconds: int = 10) -> None:
+def watch(top_n: int = 1000, poll_seconds: int = 1) -> None:
     """Poll graphml for changes and re-render automatically."""
     print(f"Watching {GRAPHML_PATH} for changes (every {poll_seconds}s)...")
-    print("Open docs/brain_graph.html in your browser and refresh after each update.")
+
+    server = start_server(port=8000)
+
+    # Initial generation — only if graph file already exists
+    if GRAPHML_PATH.exists():
+        render(top_n=top_n, open_browser=False)
+        generate_json(top_n=top_n)
+    else:
+        print(f"  Graph file not found yet: {GRAPHML_PATH}")
+        print("  Waiting for indexer to populate it...")
+
+    if server:
+        print("Open http://localhost:8000/brain_graph.html in your browser.")
+        webbrowser.open("http://localhost:8000/brain_graph.html")
+    else:
+        print(f"Open {OUTPUT_PATH.as_uri()} in your browser.")
+        webbrowser.open(OUTPUT_PATH.as_uri())
+
     print("Ctrl+C to stop.\n")
 
     last_mtime = 0.0
-    first_run = True
 
     while True:
         try:
@@ -297,12 +367,11 @@ def watch(top_n: int = 200, poll_seconds: int = 10) -> None:
 
             if mtime != last_mtime:
                 last_mtime = mtime
-                print(f"[{time.strftime('%H:%M:%S')}] Graph changed — re-rendering...")
+                print(f"[{time.strftime('%H:%M:%S')}] Graph changed — generating JSON diff...")
                 try:
-                    render(top_n=top_n, open_browser=first_run)
-                    first_run = False
+                    generate_json(top_n=top_n)
                 except Exception as exc:
-                    print(f"  Render skipped (file mid-write?): {exc}")
+                    print(f"  JSON generate skipped (file mid-write?): {exc}")
 
         except Exception as exc:
             print(f"[{time.strftime('%H:%M:%S')}] Watcher error (continuing): {exc}")
@@ -316,8 +385,14 @@ def watch(top_n: int = 200, poll_seconds: int = 10) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Visualize the LightRAG knowledge graph.")
     parser.add_argument("--watch", action="store_true", help="Re-render whenever graph updates.")
-    parser.add_argument("--top", type=int, default=200, help="Max nodes to show (by degree).")
-    parser.add_argument("--poll", type=int, default=10, help="Watch poll interval in seconds.")
+    def _positive_int(val: str) -> int:
+        n = int(val)
+        if n < 1:
+            raise argparse.ArgumentTypeError(f"Must be a positive integer, got {val!r}")
+        return n
+
+    parser.add_argument("--top", type=_positive_int, default=1000, help="Max nodes to show (by degree).")
+    parser.add_argument("--poll", type=_positive_int, default=1, help="Watch poll interval in seconds.")
     args = parser.parse_args()
 
     if args.watch:

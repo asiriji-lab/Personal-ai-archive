@@ -6,10 +6,15 @@ and launching brain operations.
 """
 
 import glob
+import json
 import os
 import subprocess
 import sys
+import threading
+import time
+import urllib.request
 from datetime import datetime
+from pathlib import Path
 
 from rich import box
 from rich.console import Console
@@ -20,7 +25,7 @@ from rich.prompt import Prompt
 from rich.table import Table
 from rich.text import Text
 
-from config import ARCHIVE_PATH, VAULT_PATH, validate_paths
+from config import ARCHIVE_PATH, EMBED_MODEL, OLLAMA_HOST, VAULT_PATH, validate_paths
 from utils import get_gpu_stats
 
 console = Console()
@@ -46,7 +51,7 @@ SCRIPTS = {
 }
 
 # Script that replaces slot "1" when indexing is detected running
-_GRAPH_WATCHDOG = ("Graph Watchdog [indexing detected]", "visualize_graph.py")
+_GRAPH_WATCHDOG = ("Graph Watchdog \\[indexing detected]", "visualize_graph.py")
 
 
 def _script_exists(filename: str) -> bool:
@@ -54,20 +59,22 @@ def _script_exists(filename: str) -> bool:
     return os.path.exists(os.path.join(SCRIPT_DIR, filename))
 
 
-def _is_indexer_running() -> bool:
-    """Return True if index_archive.py is currently running as a process."""
-    try:
-        import psutil
+_LOCK_FILE = Path(__file__).parent / ".indexer.lock"
 
-        for proc in psutil.process_iter(["cmdline"]):
-            try:
-                cmdline = proc.info.get("cmdline") or []
-                if any("index_archive" in str(arg) for arg in cmdline):
-                    return True
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                pass
-    except ImportError:
-        pass
+
+def _is_indexer_running() -> bool:
+    """Return True if index_archive.py is currently running as a live process."""
+    if not _LOCK_FILE.exists():
+        return False
+    try:
+        data = json.loads(_LOCK_FILE.read_text(encoding="utf-8"))
+        pid = int(data.get("pid", 0))
+        if pid:
+            os.kill(pid, 0)  # raises OSError if process is dead
+            return True
+    except (json.JSONDecodeError, ValueError, OSError):
+        # Stale or corrupt lock — clean it up
+        _LOCK_FILE.unlink(missing_ok=True)
     return False
 
 
@@ -76,6 +83,21 @@ def _active_scripts() -> dict:
     if _is_indexer_running():
         return {**SCRIPTS, "1": _GRAPH_WATCHDOG}
     return SCRIPTS
+
+
+def _count_graph_nodes() -> int | None:
+    """Count nodes in the LightRAG graphml file without full XML parse."""
+    from config import WORKING_DIR
+    graphml = WORKING_DIR / "graph_chunk_entity_relation.graphml"
+    try:
+        count = 0
+        with open(graphml, "r", encoding="utf-8", errors="ignore") as f:
+            for line in f:
+                if "<node " in line:
+                    count += 1
+        return count if count > 0 else None
+    except OSError:
+        return None
 
 
 # ──────────────────────────────────────────────
@@ -147,6 +169,72 @@ class Sidebar:
 
 
 # ──────────────────────────────────────────────
+# GRAPH WATCHDOG LAUNCHER
+# ──────────────────────────────────────────────
+def _launch_graph_watchdog(node_count: int | None):
+    """Sub-menu: pick renderer + top_n, then launch watchdog."""
+    console.clear()
+
+    default_renderer = "2" if (node_count or 0) > 1000 else "1"
+    count_label = f"{node_count:,} nodes detected" if node_count else "graph size unknown"
+
+    console.print(Panel(
+        f"[bold]Graph Watchdog[/] — {count_label}\n\n"
+        " [bold white]1[/]  PyVis   — up to ~1,000 nodes, CPU physics\n"
+        " [bold white]2[/]  Sigma   — up to ~6,000 nodes, WebGL fast",
+        border_style="cyan",
+    ))
+
+    renderer = Prompt.ask(
+        "[bold yellow]Renderer[/]",
+        choices=["1", "2"],
+        default=default_renderer,
+    )
+
+    if renderer == "1":
+        script = "visualize_graph.py"
+        default_top = min(500, node_count) if node_count else 500
+    else:
+        script = "visualize_sigma.py"
+        default_top = min(3000, node_count) if node_count else 3000
+
+    top_n_str = Prompt.ask(
+        "[bold yellow]How many nodes to render[/]",
+        default=str(default_top),
+    )
+    try:
+        top_n = max(1, int(top_n_str))
+    except ValueError:
+        top_n = default_top
+
+    name = "Graph Watchdog (PyVis)" if renderer == "1" else "Graph Watchdog (Sigma)"
+    run_task(name, script, extra_args=["--watch", "--top", str(top_n)])
+
+
+# ──────────────────────────────────────────────
+# EMBED PRE-WARM
+# ──────────────────────────────────────────────
+def _prewarm_embed() -> threading.Thread:
+    """Fire a background embed ping so Ollama loads the model before the indexer needs it."""
+    def _ping():
+        try:
+            payload = json.dumps({"model": EMBED_MODEL, "input": ["ping"], "keep_alive": "30m"}).encode()
+            req = urllib.request.Request(
+                f"{OLLAMA_HOST}/api/embed",
+                data=payload,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            urllib.request.urlopen(req, timeout=300)
+        except Exception:
+            pass  # Indexer's own probe will surface any real error
+
+    t = threading.Thread(target=_ping, daemon=True)
+    t.start()
+    return t
+
+
+# ──────────────────────────────────────────────
 # TASK RUNNER
 # ──────────────────────────────────────────────
 def run_task(name: str, script: str, extra_args: list[str] | None = None):
@@ -174,9 +262,24 @@ def run_task(name: str, script: str, extra_args: list[str] | None = None):
     if extra_args:
         cmd.extend(extra_args)
 
+    if script == "index_archive.py":
+        _prewarm_embed()
+
+    proc = None
     try:
-        subprocess.run(cmd, check=True)
+        proc = subprocess.Popen(cmd)
+        proc.wait()
+        if proc.returncode != 0:
+            raise subprocess.CalledProcessError(proc.returncode, cmd)
         console.print(f"\n[bold green]✅ {name} finished successfully.[/]")
+    except KeyboardInterrupt:
+        if proc and proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+        console.print("\n[bold yellow]⚠️ Interrupted — subprocess stopped.[/]")
     except subprocess.CalledProcessError as e:
         console.print(
             Panel(
@@ -205,57 +308,88 @@ def run_task(name: str, script: str, extra_args: list[str] | None = None):
 # ──────────────────────────────────────────────
 # MAIN LOOP
 # ──────────────────────────────────────────────
+try:
+    import msvcrt
+    def _read_key(timeout: float = 0.25) -> str | None:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if msvcrt.kbhit():
+                ch = msvcrt.getwch()
+                if ch in ("\x00", "\xe0"):
+                    msvcrt.getwch()
+                    continue
+                return ch
+            time.sleep(0.02)
+        return None
+except ImportError:
+    import select
+    def _read_key(timeout: float = 0.25) -> str | None:
+        r, _, _ = select.select([sys.stdin], [], [], timeout)
+        if r:
+            return sys.stdin.read(1)
+        return None
+
+
+def _build_layout_content(layout: Layout) -> int | None:
+    layout["header"].update(Header())
+    layout["side"].update(Sidebar())
+    node_count = _count_graph_nodes()
+    graph_label = f"[bold white]{node_count:,}[/] nodes" if node_count else "[dim]no graph yet[/]"
+    status_table = Table(show_header=False, box=box.SIMPLE, expand=True)
+    status_table.add_row("📍 GPU", get_gpu_display())
+    status_table.add_row("📍 VAULT", get_vault_stats())
+    status_table.add_row("📍 GRAPH", graph_label)
+    status_table.add_row("📍 MODE", "HITL Protected (Safeguarded)")
+    status_table.add_row("📍 VAULT PATH", f"[dim]{VAULT_PATH}[/]")
+    layout["body"].update(Panel(status_table, title="[bold blue]VITALS[/]", border_style="blue"))
+    layout["footer"].update(Panel(
+        "[bold yellow]NEW:[/] Option 6 for neural map | [dim]auto-refreshes every 3s[/]",
+        border_style="white",
+    ))
+    return node_count
+
+
 def main():
     validate_paths()
     layout = make_layout()
+    node_count: int | None = None
+    last_rebuild = 0.0
+    REBUILD_EVERY = 3.0
 
-    while True:
-        layout["header"].update(Header())
-        layout["side"].update(Sidebar())
+    with Live(layout, console=console, screen=True, refresh_per_second=4) as live:
+        node_count = _build_layout_content(layout)
+        live.update(layout, refresh=True)
 
-        status_table = Table(show_header=False, box=box.SIMPLE, expand=True)
-        status_table.add_row("📍 GPU", get_gpu_display())
-        status_table.add_row("📍 VAULT", get_vault_stats())
-        status_table.add_row("📍 MODE", "HITL Protected (Safeguarded)")
-        status_table.add_row("📍 VAULT PATH", f"[dim]{VAULT_PATH}[/]")
+        while True:
+            now = time.monotonic()
+            if now - last_rebuild >= REBUILD_EVERY:
+                node_count = _build_layout_content(layout) or node_count
+                last_rebuild = now
 
-        layout["body"].update(
-            Panel(
-                status_table,
-                title="[bold blue]VITALS[/]",
-                border_style="blue",
-            )
-        )
-        layout["footer"].update(
-            Panel(
-                "[bold yellow]NEW:[/] Option 6 for neural map | Config via [bold].env[/] file",
-                border_style="white",
-            )
-        )
+            key = _read_key(timeout=0.25)
+            if key is None:
+                continue
 
-        console.clear()
-        console.print(layout)
+            key = key.upper()
+            active = _active_scripts()
+            if key not in active and key != "X":
+                continue
 
-        active = _active_scripts()
-        valid_choices = list(active.keys()) + ["X"]
-        choice = Prompt.ask(
-            "\n[bold yellow]Choice[/]",
-            choices=valid_choices,
-            default="X",
-        ).upper()
-
-        if choice == "X":
-            break
-        elif choice == "2":
-            run_task("Resource Indexer", "embed.py")
-        elif choice == "1" and _is_indexer_running():
-            # Indexing is live — launch graph watchdog instead
-            run_task("Graph Watchdog", "visualize_graph.py", extra_args=["--watch"])
-        elif choice == "8":
-            run_task("Graph Watchdog", "visualize_graph.py", extra_args=["--watch"])
-        elif choice in active:
-            name, script = active[choice]
-            run_task(name, script)
+            live.stop()
+            try:
+                if key == "X":
+                    break
+                elif key == "1" and _is_indexer_running():
+                    _launch_graph_watchdog(node_count)
+                elif key == "8":
+                    _launch_graph_watchdog(node_count)
+                else:
+                    name, script = active[key]
+                    run_task(name, script)
+            finally:
+                if key != "X":
+                    live.start(refresh=True)
+                    last_rebuild = 0.0
 
 
 if __name__ == "__main__":

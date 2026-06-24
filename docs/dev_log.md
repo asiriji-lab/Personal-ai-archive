@@ -1,7 +1,7 @@
 # ZeroCostBrain — Developer Log
 
 > For the next AI, the next human, or whoever is crazy enough to read this.
-> Written after Sprint 1. Last updated: 2026-05-05.
+> Written after Sprint 1. Last updated: 2026-05-29 (adversarial audit — 10 fixes across 4 files).
 
 ---
 
@@ -440,7 +440,7 @@ from contextlib import asynccontextmanager
 @asynccontextmanager
 async def lifespan(server):
     validate_paths()
-    rag = get_rag()
+    rag = await get_rag()
     await rag.initialize_storages()
     logger.info("✅ Brain Bridge is ONLINE.")
     yield
@@ -656,6 +656,155 @@ Addressed failures in the CI pipeline related to code style and test flakiness.
 
 ---
 
+## Code Review & Lint Sprint — 2026-05-07
+
+Systematic audit of all Python and embedded JavaScript source files for correctness, style, and lint compliance. Covers all changes since the CI sprint (2026-05-05), including the Sigma canvas-slider feature.
+
+### Fix 1 — Ruff auto-fixes (whitespace, import order, single-line statements)
+**Symptom**: `ruff check . --statistics` reported 15 violations: 11 W293 trailing whitespace, 2 I001 unsorted imports, 2 E701 multiple statements on one line.
+**Fix**: `ruff check . --fix` resolved 13 automatically. Fixed the 2 remaining E701 in `visualize_sigma.py` manually by expanding `if not data: return False` to two lines.
+
+### Fix 2 — origPositions null safety for live-reloaded nodes (`sigma_hud.py` JS)
+**Symptom**: When the canvas slider is dragged after the live-reload loop adds new nodes, `origPositions.get(node)` returns `undefined` for those nodes. Accessing `.x`/`.y` on `undefined` propagates NaN into node positions, silently corrupting the layout.
+**Root cause**: `origPositions` is captured once at FA2 init time. The 3-second live-reload polling adds nodes to `graph` but never registers them in `origPositions`.
+**Fix**: Nullish-coalescing fallback in the canvas-slider listener:
+```js
+const orig = origPositions.get(node) ?? {
+    x: graph.getNodeAttribute(node, 'x'),
+    y: graph.getNodeAttribute(node, 'y')
+};
+```
+New nodes scale from their current position, which is the correct origin.
+
+### Fix 3 — Stale FA2Layout state after canvas rescale during live mode (`sigma_hud.py` JS)
+**Symptom**: After dragging the canvas slider while Live Mode is active, force simulation resumes with the engine's internal velocities from before the rescale, causing a brief "spring-back" artefact as the engine corrects to the new positions.
+**Root cause**: `stopLive()` calls `liveLayout.stop()` (pauses) but does not null `liveLayout`. `startLive()` only creates a fresh `FA2Layout` when `liveLayout === null` — so after canvas rescale it resumes the stale engine on the new coordinates.
+**Fix**: Kill and null the layout before restarting in the canvas-slider handler:
+```js
+if (wasLive) {
+    if (liveLayout) { liveLayout.kill(); liveLayout = null; }
+    startLive();
+}
+```
+
+### Fix 4 — Dead code removed (`index_archive.py`, `sigma_hud.py` JS)
+- `_index_single_file()`: `return False, "Unknown error"` at line 288 was unreachable — the `for` loop above always returns first. Removed.
+- `build_sigma_js()`: `let edgeCount` was incremented in the initial edge-build loop but never read (HUD stats use `d.edges.length` directly from the reload payload). Removed.
+
+### Fix 5 — Local imports moved to module top (`brain_server.py`, `config.py`, `visualize_graph.py`)
+- `brain_server.py`: `import asyncio` (inside `vault_search`) and `from config import VAULT_PATH as _VAULT` (inside `review_queue`) both moved to module-level imports.
+- `config.py`: `import warnings` inside `if CHUNK_MAX_CHARS > 1500:` moved to module top.
+- `visualize_graph.py`: `import math` inside `generate_json()` and inside the pyvis render function moved to module top.
+
+### Fix 6 — Duplicated JSON-load error handling extracted (`brain_server.py`)
+**Symptom**: `brain_status()` had two identical try/except blocks for reading a JSON file and counting entries. Any change to error handling needed to be duplicated.
+**Fix**: Extracted `_count_json_entries(path, corrupt_msg)` helper; `brain_status()` status dict is now built inline without repetition.
+
+### Deferred Items
+- Pre-existing test collection error: pytest collects `test_query` (imported alias for `query_archive`) in `test_brain.py` as a test function and looks for a `query` fixture. Fix: rename `test_query` in `index_archive.py` to a non-`test_` name, or remove the re-export.
+- `ruff.toml` keeps F401 (unused imports) suppressed — enabling it generates too much noise. Deferred to a dedicated import-cleanup sprint.
+- Large-function refactor for `sigma_hud.py` (JS/CSS embedded in Python strings) deferred — would require splitting into separate asset files, changing the build pipeline.
+
+---
+
+## Adversarial Code Audit — 2026-05-29
+
+Multi-agent workflow: 4 independent scanners ran in parallel (dead code, bug patterns, critical bugs, architecture), each with a 90–95% certainty threshold. Each raw finding was then challenged by a dedicated skeptic agent whose default stance was "refuted" — it read the full function and caller chain before confirming. Only findings the skeptic could not refute with confidence ≥ 0.75 were escalated to severity triage, where any finding whose failure mode used "might" or "could possibly" was dropped.
+
+**12 raw findings → 2 refuted → 10 confirmed → 0 critical, 0 high, 4 medium, 6 low**
+
+Full report: `docs/AUDIT_REPORT.md`
+
+---
+
+### Fix A1 — `index_archive.py`: Synchronous SQLite Blocks Event Loop in `_index_pipeline_b` (Medium)
+
+**Problem**: `_index_pipeline_b` is `async def` but called `sqlite3.connect()`, `conn.executescript()`, and `conn.commit()` directly on the event loop. During Pipeline B indexing (news articles, personal notes), the entire asyncio event loop was blocked for the duration of the SQLite write, stalling LightRAG's own pending coroutines.
+
+**Fix**: Extracted the SQLite block into an inner sync function `_write_to_db()` and called it via `await asyncio.to_thread(_write_to_db)`. Consistent with the `asyncio.to_thread` convention documented in `brain_server.py`.
+
+---
+
+### Fix A2 — `index_archive.py`: Non-Atomic Write in `_save_failures` (Medium)
+
+**Problem**: `_save_failures()` wrote directly to `FAILURES_PATH` via `.write_text()`. If the process was killed mid-write (SIGKILL, OOM), the file was left partially written. On the next run, `_load_failures()` caught the `JSONDecodeError` and returned `{}`, silently erasing all failure history. Previously-exhausted files would be retried from scratch, potentially triggering redundant LLM calls.
+
+`_save_manifest()` immediately above it already used the correct atomic tmp+rename pattern — this was a simple inconsistency.
+
+**Fix**: Applied the same pattern: write to a `.tmp` file, then `tmp.replace(FAILURES_PATH)`.
+
+---
+
+### Fix A3 — `index_archive.py`: `CancelledError` Bypasses Manifest Save in `index_single_file` (Medium)
+
+**Problem**: `index_single_file()` (the public single-file API used by `validate_and_archive.py`) had no protection against asyncio task cancellation. If `CancelledError` was raised inside `await _index_single_file(rag, fp)` — for example from Ctrl-C while `rag.ainsert()` was running internally — the `_save_manifest()` call in the success branch was never reached, even if prior files in a batch had been successfully indexed. The manifest on disk would not reflect completed work.
+
+**Fix**: Wrapped the `await _index_single_file(...)` call in `try/except BaseException: _save_manifest(manifest); raise` — the manifest is flushed before any cancellation propagates.
+
+---
+
+### Fix A4 — `brain_server.py`: `brain_status()` Hardcodes LightRAG KV-Store Filenames (Medium)
+
+**Problem**: `brain_status()` read `kv_store_doc_status.json` and `kv_store_full_entities.json` by name directly. No function in `index_archive.py` encapsulated these filenames. If LightRAG renames or restructures its KV-store layout in a future version, `brain_status()` silently returns `{"indexed_documents": 0, "entities": 0}` — indistinguishable from a genuinely empty brain, with no error or warning.
+
+**Fix**: Added `get_brain_counts()` to `index_archive.py`. Both the KV-store filenames and the count logic now live in one place. `brain_server.py` imports and calls it; `_count_json_entries()` helper was removed.
+
+**Note on `brain_explorer.py`**: It also reads KV-store files but uses its own `load_json()` abstraction for full-content display (entities/relations for visualization), not counts — different enough use case that it does not need to call `get_brain_counts()`.
+
+---
+
+### Fix A5 — `embed.py`: `OLLAMA_HOST` Ignored in `get_embeddings()` (Low)
+
+**Problem**: `embed.py` imported `OLLAMA_HOST` from config but called `ollama.embed()` (module-level default client) without passing a host. Any user setting `OLLAMA_HOST` to a non-default address in `.env` got embeddings silently generated against `localhost:11434` regardless.
+
+**Fix**: Created `ollama.Client(host=OLLAMA_HOST)` at the start of `get_embeddings()` and called `client.embed()` / `client.embeddings()` through it.
+
+---
+
+### Fix A6 — `config.py`: `RAGConfig` TypedDict Was Dead Scaffolding (Low)
+
+**Problem**: `RAGConfig` TypedDict and its `TypedDict` import existed only in `config.py` and were never referenced anywhere in the project. Readers could assume it was the typed config interface and write code against it — none of which would be enforced.
+
+**Fix**: Removed `from typing import TypedDict` and the `RAGConfig` class entirely.
+
+---
+
+### Fix A7 — `index_archive.py`: `import hashlib` Unused (Low)
+
+**Problem**: `import hashlib` appeared at module level but no `hashlib` symbol was called anywhere in the file. All hashing is done via `file_hash` imported from `utils.py`.
+
+**Fix**: Removed the import.
+
+---
+
+### Fix A8 — `index_archive.py`: `_write_lock()` Dead with Subtly Wrong Semantics (Low)
+
+**Problem**: `_write_lock()` was defined but never called. The live CLI entry point at the bottom of the file duplicated its logic inline, but with `heartbeat: ""` (empty string) instead of a real ISO timestamp. This is intentional: `_lock_is_stale()` skips the age check when `heartbeat` is falsy, preventing a false-stale result before the heartbeat thread writes its first real timestamp. `_write_lock()` wrote a real timestamp immediately, so wiring it in would cause the lock to be immediately detectable as stale by another process before the heartbeat thread fires.
+
+**Fix**: Deleted `_write_lock()`. Added a comment at the inline lock write explaining the intentional empty-string heartbeat, so no future developer "cleans it up" by introducing the function again.
+
+---
+
+### Fix A9 — `brain_server.py`: `test_query` Imported but Unused in Server (Low)
+
+**Problem**: `test_query` (deprecated alias for `query_archive`, defined in `index_archive.py`) was pulled into `brain_server.py`'s namespace but never called there. It falsely implied the alias was part of the server's active API surface.
+
+**Note**: This also fixes a pre-existing test collection warning — pytest sees `test_query` exported from `index_archive` and tries to collect it as a test function, then fails looking for a `query` fixture.
+
+**Fix**: Removed `test_query` from the import line in `brain_server.py`.
+
+---
+
+### Fix A10 — `embed.py`: `--resume` CLI Flag Was a Silent No-Op (Low)
+
+**Problem**: The argument parser declared `--resume` with a help string describing resume behavior, but `args.resume` was never read and `index_resources()` has no resume parameter. Users who passed `--resume` got no error, no acknowledgment, and identical behavior to a plain run. Misleading help text.
+
+**Note**: The prior "Phase 3 Sprint" entry in this log describes adding `--resume` as a fix — the flag was added to the parser but the implementation was never wired in.
+
+**Fix**: Removed the `--resume` argument definition. The default incremental behavior (skip unchanged files via manifest) already covers the resume case.
+
+---
+
 ## Performance Numbers (Measured)
 
 | Setting | Value |
@@ -731,6 +880,619 @@ nvidia-smi -lms 100 --query-gpu=timestamp,temperature.gpu,clocks.gr,utilization.
 **Why chunk at 1500 chars**: Math-derived from hardware. See Bug 5 above. Balance between: enough context for meaningful entity extraction, small enough to finish before timeout.
 
 **Why AutoResearchClaw over manual research**: Automated literature search, synthesis, and paper writing in 23 stages. Produces structured knowledge cards alongside the paper. The cards are more useful than the paper for LightRAG indexing because they're atomic and well-scoped.
+
+---
+
+## Graph Watchdog Routing — 2026-05-13
+
+Replaced the hardcoded PyVis-only watchdog launch in `brain_tui.py` with a routed sub-menu that picks the right renderer based on detected graph size and prompts for a node render limit.
+
+### Fix 1 — Slot 8 always launched PyVis regardless of graph size
+**Problem**: `brain_tui.py` slot 8 and the slot-1 indexer-swap both hard-coded `visualize_graph.py --watch`. The Sigma.js renderer (`visualize_sigma.py`) existed and handled 6× more nodes (6,000 vs 1,000) via WebGL, but was never reachable from the TUI.
+
+**Fix**: Added `_launch_graph_watchdog(node_count)` that shows a sub-menu when slot 8 (or the slot-1 swap) is pressed:
+
+```
+Graph Watchdog — 1,847 nodes detected
+
+ 1  PyVis   — up to ~1,000 nodes, CPU physics
+ 2  Sigma   — up to ~6,000 nodes, WebGL fast
+
+Renderer [2]: _
+How many nodes to render [1847]: _
+```
+
+Smart default: Sigma pre-selected when node count > 1,000, PyVis otherwise. Both slots now call `_launch_graph_watchdog(node_count)`.
+
+### Fix 2 — No graph size signal anywhere in the TUI
+**Problem**: The VITALS panel had no information about graph state, so users had no basis for choosing a renderer or deciding how many nodes to render.
+
+**Fix**: Added `_count_graph_nodes()` — a fast line-scan of the graphml file (no XML parse, O(lines)) — and a new `GRAPH | N nodes` row in the VITALS panel, refreshed every TUI loop. Shows `no graph yet` when the graphml file is absent.
+
+### Fix 3 — top_n was silently hardcoded per-script
+**Problem**: PyVis defaulted to `--top 1000` and Sigma to `--top 6000`, both inside their own scripts. There was no way to override from the TUI without editing the script or using a CLI directly.
+
+**Fix**: After renderer selection the TUI prompts `How many nodes to render [N]:` with a capped default (PyVis: `min(500, node_count)`, Sigma: `min(3000, node_count)`). The entered value is passed as `--top N` to the chosen script. The scripts' own defaults remain as fallbacks for direct CLI use.
+
+---
+
+## Sigma Watchdog Delta Animation & JSON Write-Race Fix — 2026-05-15
+
+Two related bugs: the Sigma viewer didn't animate node/edge changes the way the PyVis watchdog did, and both renderers could serve a truncated JSON to the browser if the indexer was mid-write during a poll.
+
+### Fix 1 — Sigma watchdog dropped removed nodes instantly, no red flash (`sigma_hud.py`)
+
+**Problem**: The PyVis watchdog (`graph_hud.py`) flashes removed nodes red for 1500ms before dropping them, and flashes new nodes/edges green for 3000ms before reverting. The Sigma watchdog had none of this — it called `graph.dropNode(nid)` immediately and wiped all edges with `graph.clearEdges()` on every tick, giving no visual feedback about what changed.
+
+**Fix**: Added `_flashColor` attribute support to both reducers:
+
+```js
+// nodeReducer — check before any other logic
+if (data._flashColor) {
+    return { ...res, color: data._flashColor, size: (data.size || 4) * 1.6, zIndex: 3 };
+}
+
+// edgeReducer — check before default color override
+if (data._flashColor) {
+    return { ...data, color: data._flashColor, size: 2.5, zIndex: 2, hidden: false };
+}
+```
+
+Polling loop now does proper delta tracking instead of `clearEdges()`:
+- **Removed nodes**: set `_flashColor = '#ef4444'` → `dropNode` after 1500ms
+- **Removed edges**: set `_flashColor = '#ef4444'` → `dropEdge` after 1500ms
+- **New nodes**: add with `color = '#22c55e'` → revert to original after 2000ms (was already working)
+- **New edges**: add with `_flashColor = '#22c55e'` → clear flash + shrink size after 2000ms
+
+Edge tracking uses a canonical key `edgeKey(s, t) = s < t ? s+"||"+t : t+"||"+s` so undirected edge identity is stable across polls.
+
+### Fix 2 — `graph_data.json` served truncated during write (both renderers)
+
+**Problem**: Both `visualize_graph.py` and `visualize_sigma.py` wrote `graph_data.json` with a plain `open(..., "w")` / `json.dump()`. The Sigma and PyVis viewers poll the file every 3 seconds. If a poll landed mid-write (common on a 2.8MB file), the browser received a truncated JSON and threw:
+
+```
+Expected ',' or '}' after property value in JSON at position 1610300
+```
+
+Python's own JSON parser reported the file as valid because it was checked after the write finished — the race window only exists during the write.
+
+**Fix**: Atomic write via temp file + rename in both scripts:
+
+```python
+# visualize_sigma.py and visualize_graph.py
+tmp = DATA_JSON_PATH.with_suffix(".tmp")
+with open(tmp, "w", encoding="utf-8") as f:
+    json.dump({"nodes": vis_nodes, "edges": vis_edges}, f)
+tmp.replace(DATA_JSON_PATH)
+```
+
+`Path.replace()` is a single OS-level rename — atomic on all platforms. The browser either gets the old complete file or the new complete one, never a partial write.
+
+---
+
+## Indexer Correctness & Performance Sprint — 2026-05-16
+
+Full review of the indexing pipeline against the Council Brief (Data Indexing Performance Summit). A second-opinion review (Opus) then found 2 additional real bugs. A follow-up audit caught 6 more. All fixed in one session. Tests added for every fix.
+
+---
+
+### Fix 1 — `index_archive.py`: Pipeline B duplicate chunks on re-index (Bug)
+
+**Problem**: `_index_pipeline_b()` had no DELETE before INSERT. Every time a Pipeline B file (news article, meeting note, personal note) was re-indexed after editing, its old chunk rows in `data/index.db` were left in place and new rows were appended. Duplicates compounded silently on every edit.
+
+**Root cause**: `vec_chunks` is a sqlite-vec virtual table with no `ON DELETE CASCADE`. Deleting from `chunks` does not cascade. `chunks_fts` has triggers that self-clean, but `vec_chunks` does not.
+
+**Fix**: Added two DELETEs before the insert loop, in correct order:
+```python
+cur.execute(
+    "DELETE FROM vec_chunks WHERE rowid IN (SELECT id FROM chunks WHERE path = ?)",
+    (rel_path,),
+)
+cur.execute("DELETE FROM chunks WHERE path = ?", (rel_path,))
+```
+`vec_chunks` must be deleted first (before `chunks` rowids are gone). `chunks_fts` triggers handle their own cleanup on the `chunks` delete.
+
+---
+
+### Fix 2 — `index_archive.py`: `get_rag()` race condition (Bug)
+
+**Problem**: The `async with _rag_lock` block released the lock before `_rag_instance` was assigned. Two concurrent `get_rag()` callers could both pass the `is not None` guard and both construct a `LightRAG` instance. The second construction silently overwrote the first.
+
+**Fix**: Moved the entire `LightRAG(...)` construction and `_rag_instance =` assignment inside the lock body, so the check-then-set is atomic.
+
+---
+
+### Fix 3 — `index_archive.py`: Pre-filter threshold too low
+
+**Problem**: The near-empty file guard was `len(content.strip()) < 5`, allowing files up to 4 chars into the embedding and LLM pipeline. Council recommended 200 chars.
+
+**Fix**: Raised to `< 200`. Whitespace-only files are also caught because `.strip()` is applied.
+
+---
+
+### Fix 4 — `config.py`: Wrong CHUNK_MAX_CHARS warning
+
+**Problem**: The warning fired at `CHUNK_MAX_CHARS > 1500` with the message "exceeds safe limit for RTX 4050 6GB". The 1500 default was chosen as a *LLM timeout* safety margin (see Bug 5 in the main log), not a VRAM limit for the embedding model. The warning discouraged the legitimate optimization of raising chunk size when using Gemini (no timeout risk).
+
+**Fix**: Raised threshold to `> 3000`, reframed message around retrieval precision:
+```python
+if CHUNK_MAX_CHARS > 3000:
+    warnings.warn(
+        f"BRAIN_CHUNK_SIZE={CHUNK_MAX_CHARS} may reduce retrieval precision; "
+        "nomic-embed-text supports up to ~8192 tokens but larger chunks yield coarser matches"
+    )
+```
+
+---
+
+### Fix 5 — `index_archive.py`: `indexed_at: ""` dead field in frontmatter
+
+**Problem**: `_prepend_frontmatter()` wrote `indexed_at: ""` as a literal empty string. It was never populated. The manifest (`index_manifest.json`) already tracked the real timestamp, making the frontmatter field misleading.
+
+**Fix**: `_prepend_frontmatter()` now accepts an `indexed_at` parameter. Call site passes `datetime.now(timezone.utc).replace(microsecond=0).isoformat()`.
+
+---
+
+### Fix 6 — `index_archive.py`: Auto-prune graph after indexing (Council plan gap)
+
+**Problem**: `scripts/prune_graph.py` existed and cleaned orphaned/date/symbol nodes but was never called automatically. After each indexing run the graph accumulated noise.
+
+**Fix**: Added a post-indexing call in `index_archive()` after the main loop. Imports `prune_graph` module via `sys.path` injection (no `__init__.py` in `scripts/`). Wrapped in `try/except` so pruning failure never aborts a successful index run.
+
+---
+
+### Fix 7 — `index_archive.py`: Per-phase timing instrumentation (Council plan gap)
+
+**Problem**: No visibility into where indexing time was spent. The only timing was `_make_timed_llm` (LLM calls in local mode only).
+
+**Fix**: Added `[PHASE]` log lines in `_index_single_file()` for both pipelines:
+- Pipeline A: `chunking=Xs | kg_insert=Ys | chunks=N | pipeline=A`
+- Pipeline B: `chunking=Xs | embed+insert=Ys | chunks=N | pipeline=B`
+
+---
+
+### Fix 8 — `scripts/prune_graph.py`: `sys.exit(1)` escaped `except` guard (Critical bug)
+
+**Problem**: `load_graph()` called `sys.exit(1)` when the GraphML file was absent. `SystemExit` inherits from `BaseException`, not `Exception`. The caller in `index_archive.py` only caught `FileNotFoundError` and `Exception`, so `SystemExit` propagated and **terminated the entire indexing process**. This fires on every first run where all files route to Pipeline B (no graph is ever written).
+
+**Fix**: Changed `load_graph()` to raise `FileNotFoundError(...)` instead of `sys.exit(1)`. Updated `main()` (standalone CLI) to catch `FileNotFoundError` and call `sys.exit(1)` there — keeping clean CLI behaviour without leaking `SystemExit` into library callers.
+
+---
+
+### Fix 9 — `scripts/prune_graph.py`: `rename()` fails on Windows if `.bak` exists
+
+**Problem**: `save_graph()` used `GRAPH_PATH.rename(backup_path)`. On Windows, `Path.rename()` raises `FileExistsError` if the destination already exists. The second run of pruning always hit this.
+
+**Fix**: Changed to `GRAPH_PATH.replace(backup_path)`. `Path.replace()` atomically overwrites the destination on all platforms.
+
+---
+
+### Fix 10 — `index_archive.py`: Pipeline B made N Ollama round-trips per file
+
+**Problem**: `_index_pipeline_b()` called `await _local_embed([chunk])` inside the per-chunk loop — one Ollama HTTP round-trip per chunk. `_local_embed` already accepts a list and Ollama batches internally.
+
+**Fix**: Single `await _local_embed(chunks)` call before the loop returns `all_embeddings` (shape N×768). The loop indexes `all_embeddings[i]` per chunk. N round-trips → 1.
+
+---
+
+### Fix 11 — `index_archive.py`: SQLite connection leak in Pipeline B
+
+**Problem**: `conn = sqlite3.connect(...)` in `_index_pipeline_b()` had no `try/finally`. If `_local_embed` raised during the loop, the connection was never closed.
+
+**Fix**: Wrapped with `try/finally: conn.close()`.
+
+---
+
+### Fix 12 — `index_archive.py`: Misleading `num_ctx` log in Gemini mode
+
+**Problem**: `get_rag()` logged `Using model: gemini-2.0-flash | num_ctx: 4096`. `LOCAL_CONTEXT_WINDOW` is an Ollama-specific setting meaningless for a cloud LLM.
+
+**Fix**: Log now shows `cloud LLM` instead of the local context window value when `LLM_PROVIDER == "GEMINI"`.
+
+---
+
+### Fix 13 — `scripts/prune_graph.py`: `print()` bypassed logging config
+
+**Problem**: All output in `prune_graph.py` used `print()`. When called from `index_archive.py`, output bypassed the logging handlers (formatters, level filters, file sinks).
+
+**Fix**: Replaced all `print()` calls with `logger.info()` / `logger.error()`. Added `logging.basicConfig()` to `main()` so the standalone script still produces output when run directly.
+
+---
+
+### Tests Added — `tests/test_indexer_fixes.py` (11 tests)
+
+| Test | Covers |
+|---|---|
+| `test_prepend_frontmatter_writes_timestamp` | Real UTC timestamp written, not empty string |
+| `test_prepend_frontmatter_default_empty_string` | Backward-compatible default |
+| `test_prepend_frontmatter_idempotent` | No double-prepend on existing frontmatter |
+| `test_short_content_is_skipped` | < 200 chars → success without calling `rag.ainsert` |
+| `test_short_content_boundary` | Exactly 200 chars proceeds to indexing |
+| `test_short_content_199_chars_skipped` | 199 chars is skipped (boundary exclusive) |
+| `test_phase_log_emitted_pipeline_a` | `[PHASE]` log with `chunking=` and `kg_insert=` |
+| `test_phase_log_emitted_pipeline_b` | `[PHASE]` log with `embed+insert=` |
+| `test_pipeline_b_deletes_stale_rows_on_reindex` | Re-index replaces rows, no accumulation |
+| `test_get_rag_constructs_once_under_concurrency` | 3 concurrent callers → 1 `LightRAG` construction |
+| `test_index_archive_survives_missing_graph_file` | No crash when graph absent (Fix 8 regression test) |
+
+---
+
+### What is still a config-only change (not code)
+
+The council's single highest-impact recommendation — **Gemini hybrid mode** — requires only `.env` changes. No code was needed; the infrastructure was already there:
+
+```env
+BRAIN_LLM_PROVIDER=GEMINI
+GOOGLE_API_KEY=your_key_here
+BRAIN_CHUNK_SIZE=2500
+```
+
+With these set, `max_async` goes from 1 → 10, and chunk count drops ~40%. Expected: 5+ hours → under 90 minutes (Phase 1 target from the brief). Run `python index_archive.py --reset` to apply.
+
+---
+
+## Indexing Reliability Fixes — 2026-05-17
+
+Three bugs found during a live indexing run of ~80 documents. Investigated by Sonnet 4.6 (codebase analysis) and verified by Opus 4.7 (independent review). All fixed in one session.
+
+---
+
+### Bug 8 — `num_gpu=99` Causes Ollama 500 on Every LLM Call
+
+**Symptom**: All document extractions fail with:
+```
+ollama._types.ResponseError: memory layout cannot be allocated with num_gpu = 99 (status code: 500)
+```
+36+ documents stuck in FAILED state. The retry loop resets them to PENDING and retries — hitting the same error on every attempt. Loop runs until user interrupts.
+
+**Root cause (two sources)**:
+
+1. `.env` line 16 had `BRAIN_NUM_GPU=99`. This was set when creating the custom Modelfile (see Bug 7) and was never changed. The value `99` was intended to max out GPU layer offload, but it does not mean "use all GPU" — it means "use exactly 99 layers." Qwen 3.5 4B has 37 offloadable layers. Ollama rejects values that exceed what it can fit into the current VRAM layout (accounting for KV cache + Windows WDDM overhead + concurrent `nomic-embed-text`), returning HTTP 500.
+
+2. `docs/setup_brain.md` Modelfile snippet also contained `PARAMETER num_gpu 99`. Anyone running a fresh setup would bake this into the model itself, making the `.env` fix irrelevant for new installs.
+
+**What `-1` means**: Ollama auto-detects how many layers fit in available VRAM. On a 6GB RTX 4050 with nomic-embed-text loaded and Windows overhead (~0.7GB), this typically lands at 28–33 layers — enough for full-speed inference without the 500.
+
+**Fix**:
+
+`.env`:
+```
+BRAIN_NUM_GPU=-1
+```
+
+`docs/setup_brain.md` Modelfile snippet — removed `PARAMETER num_gpu 99`:
+```powershell
+@"
+FROM qwen3.5:4b
+PARAMETER num_ctx 4096
+"@ | Out-File -FilePath "$env:TEMP\Modelfile" -Encoding utf8
+```
+`num_gpu` is now controlled exclusively via `.env → BRAIN_NUM_GPU` at runtime. The Modelfile no longer bakes it in.
+
+**Note**: If you recreated `qwen3.5:4b-brain` with the old Modelfile, it has `num_gpu 99` baked in. Recreate it with the updated snippet in `docs/setup_brain.md`. The `.env` override at the API call level (`options["num_gpu"]`) takes precedence over Modelfile defaults for requests that pass options — but the ping check and any direct `ollama run` calls will still use the Modelfile value.
+
+---
+
+### Bug 9 — Embedding Workers Time Out (240s) from VRAM Contention
+
+**Symptom**: After the `num_gpu=99` fix, LLM extractions succeed but embedding workers time out during entity upsert:
+```
+WARNING: Embedding func: Worker timeout for task ... after 240s
+WARNING: VDB entity_upsert attempt 1 failed for Kevin Warsh: Embedding func: Worker execution timeout after 240s, retrying...
+```
+
+**Root cause**: LightRAG processes documents semi-concurrently. Two LLM extractions were running simultaneously (doc-5b9c... and doc-b7a4... both in flight). After both finish, LightRAG tries to embed the extracted entities while the LLM model is still resident in VRAM (Ollama's default keep-alive is 5 minutes). On a 6GB card, the two models can coexist, but the combined peak during concurrent LLM calls briefly exhausts VRAM headroom. The embedding workers then stall waiting for VRAM to be released. `default_embedding_timeout=120s` → worker timeout = 2× = 240s was too short for this wait.
+
+**Attempted fix that made things worse**: Setting `options={"num_gpu": 0}` on every embed call to force `nomic-embed-text` to run on CPU. This caused Ollama to detect a settings change and **reload** the model from GPU to CPU on the first call of each run — a blocking operation that froze the entire process at the pre-flight ping check (the freeze the user saw after the first fix). Reverted.
+
+**Actual fix**: Increased `default_embedding_timeout` in `get_rag()`:
+```python
+default_embedding_timeout=300,  # was 120
+```
+Worker timeout rises from 240s to 600s. The embedding was not broken — it just needed more time to wait out the LLM's post-inference VRAM pressure. The embedder always succeeded eventually; only the timeout was triggering.
+
+**⚠️ Note (2026-05-17)**: This fix was documented here but never applied to the code. The value stayed at `120` until a follow-up session caught it re-surfacing ("WARNING: Embedding func: Worker timeout after 240s"). Applied for real this time.
+
+---
+
+### Bug 10 — `_prepend_frontmatter` Silently Corrupts Non-Markdown Files
+
+**Symptom**: A `.cir` circuit simulator XML file appeared in the indexing pipeline logs.
+
+**Root cause**: The batch indexer safely uses `glob("**/*.md")`, so it only processes markdown. However, the public `index_single_file()` API (called by `scripts/validate_and_archive.py`) and the `--retry-failed` path call `_index_single_file()` with no extension check. If a non-markdown file reaches `_index_single_file()`, it passes through to `_prepend_frontmatter()`, which **unconditionally prepends YAML frontmatter to the file** if it doesn't already start with `---`. This mutates the source file on disk — a `.cir` file would have YAML injected into its header, breaking it silently.
+
+**Fix — two guards added**:
+
+1. `_index_single_file()` — reject non-indexable files before the retry loop:
+```python
+_INDEXABLE_EXTENSIONS = {".md", ".txt"}
+
+ext = Path(file_path).suffix.lower()
+if ext not in _INDEXABLE_EXTENSIONS:
+    return False, f"Unsupported file type '{ext}'", "general", "A"
+```
+
+2. `_prepend_frontmatter()` — bail out early:
+```python
+if Path(file_path).suffix.lower() not in _INDEXABLE_EXTENSIONS:
+    return
+```
+
+**Why two guards**: The first prevents the file from being processed at all. The second is defense-in-depth — if `_prepend_frontmatter` is ever called directly, it still won't corrupt the file.
+
+---
+
+### Bug 11 — Batch Retry Storm on Infrastructure Errors
+
+**Symptom**: When `num_gpu=99` caused Ollama 500s, the batch loop retried every document 3 times, then `--retry-failed` reset all 36 failed docs back to PENDING. Running `--retry-failed` again hit the same error on all 36 docs again. Total wasted time: ~18 minutes of retry churn before user interrupted.
+
+**Root cause**: `_index_single_file` caught all exceptions and returned `(False, error_msg)`. The batch loop treated infrastructure failures (Ollama crash) identically to content failures (malformed document). The retry logic makes sense for content errors; it is actively harmful for infrastructure errors because the same error will repeat on every doc.
+
+**Fix**: Infrastructure errors (detected by `"status code: 500"` or `"memory layout cannot be allocated"` in the message) now re-raise out of `_index_single_file` rather than returning a soft failure. The batch loop catches the propagated exception and aborts with a clear message:
+```
+🛑 Infrastructure error — aborting batch to prevent retry storm: ...
+   Fix: check BRAIN_NUM_GPU in .env and that Ollama has enough VRAM.
+```
+
+---
+
+## Indexer Speed Regression — 2026-05-17
+
+Root-cause analysis by Sonnet 4.6 + Opus 4.7 comparing the working tree against git HEAD. Three bugs introduced in the current sprint, found together because they combined to make the indexer unbearably slow ("like a turtle").
+
+---
+
+### Bug 12 — `keep_alive=0` Evicts Embed Model After Every Chunk (Critical)
+
+**Symptom**: Indexer takes hours. `[PHASE]` log shows `kg_insert=` times 10–20× longer than expected. `ollama ps` shows nothing loaded between calls.
+
+**Root cause**: The working-tree changes added `keep_alive=0` to the Ollama embed call in `_local_embed()`:
+
+```python
+data = await client.embed(model=EMBED_MODEL, input=texts, keep_alive=0)
+```
+
+`keep_alive=0` tells Ollama to immediately unload the embedding model from VRAM/RAM after every single request. The next call then has to reload it from disk. With `nomic-embed-text-cpu` this is a few seconds per reload. With `nomic-embed-text` (GPU) it is **196 seconds** per reload due to VRAM contention with `qwen3.5:4b-brain`. Pipeline A calls `rag.ainsert()` per chunk, which triggers one embed call per chunk. With a typical document having 10+ chunks, the model was being reloaded 10+ times per file.
+
+**Fix**: `keep_alive="30m"` — model stays hot in VRAM/RAM for the entire indexing session.
+
+```python
+data = await client.embed(model=EMBED_MODEL, input=texts, keep_alive="30m")
+```
+
+**Why it was added**: Unknown — likely a debugging artifact or an attempt to free VRAM between files. It had the opposite effect.
+
+---
+
+### Bug 13 — `rag.ainsert()` Called Per Chunk Instead of Per File (High Impact)
+
+**Symptom**: `kg_insert=` time scales linearly with chunk count. Timing shows no batch speedup even after fixing Bug 12.
+
+**Root cause**: The indexer looped `rag.ainsert(chunk)` once per chunk:
+
+```python
+for chunk in chunks:
+    await rag.ainsert(chunk)  # N sequential calls
+```
+
+LightRAG's `ainsert()` accepts a list. Calling it N times means N separate lock acquisitions, queue entries, and internal dispatch cycles instead of one batched call.
+
+**Fix**:
+
+```python
+await rag.ainsert(chunks)  # One call, LightRAG batches internally
+```
+
+---
+
+### Bug 14 — Auto-Prune Runs After Every Indexing Session (Medium Impact)
+
+**Symptom**: Each indexing run adds 10–30 seconds of graph traversal even for small batches.
+
+**Root cause**: `index_archive()` unconditionally called `prune_graph()` after every successful run, even when indexing 1 file.
+
+**Fix**: Moved behind a `--prune-after` CLI flag. Graph pruning now only runs when explicitly requested:
+
+```powershell
+python index_archive.py --prune-after
+```
+
+---
+
+### Non-Bug: GPU vs CPU Embed Model Cold Start (196 seconds)
+
+**Symptom**: First embed probe after launching the indexer appears to freeze for 3+ minutes with no log output. Looks like a hang.
+
+**Root cause (two parts)**:
+
+1. The `.env` correctly sets `BRAIN_EMBED_MODEL=nomic-embed-text-cpu` (CPU, ~seconds to load). But `nomic-embed-text` (GPU, `nomic-embed-text:latest`) was tested independently and takes **196 seconds** cold-load due to VRAM contention — Ollama must evict `qwen3.5:4b-brain` (3.4 GB) to fit the embed model. CPU variant avoids this entirely; it loads into system RAM alongside the LLM.
+
+2. The probe `await _local_embed(["ping"])` had no log line before or after it, so the 3-minute wait looked like a hang.
+
+**Fix**:
+- `.env` already correct (`nomic-embed-text-cpu`). No change needed.
+- Added log line before the probe:
+  ```
+  ⏳ Probing embed model (nomic-embed-text-cpu) — cold start may take up to 2 min...
+  ✅ Embed model ready.
+  ```
+- Added pre-warm thread to `brain_tui.py`: when the user selects the Indexer, the TUI fires an embed ping in a background thread *before* spawning the subprocess. The model loads during the ~5s `initialize_storages()` phase, so the probe returns instantly by the time the subprocess reaches it.
+
+**Lesson**: Never put a potentially slow operation (first Ollama call) in a silent section of startup. Always log before and after.
+
+---
+
+### Tests Added / Confirmed
+
+- All 77 existing tests pass after fixes 12–14. No new tests added (fixes are configuration-level changes, not logic changes).
+
+---
+
+## Full Codebase Audit — 2026-05-17
+
+Systematic audit of every file (index_archive.py, brain_server.py, config.py, utils.py, brain_tui.py, query.py, visualize_graph.py, visualize_sigma.py, graph_hud.py, sigma_hud.py, scripts/prune_graph.py, scripts/migrate_manifest.py, all tests). Audited by Sonnet 4.6 + Opus 4.7.
+
+---
+
+### HB-1 — Heartbeat loop defined but never started (Critical)
+
+**Problem**: `_heartbeat_loop()` in `index_archive.py` was defined but never called at the CLI entry point. The lock file was created with `_LOCK_FILE.touch()` (0 bytes), but the heartbeat writes JSON — so `json.loads(empty_file)` silently failed on `except Exception: pass`. The heartbeat never ran, meaning lock files persisted forever after crashes.
+
+**Fix**: Entry point now writes `{"pid": os.getpid(), "started": ..., "heartbeat": ""}` to the lock file, starts a daemon heartbeat thread, registers `atexit` cleanup, and signals `_stop_heartbeat` in the `finally` block.
+
+---
+
+### HB-2 — Manifest write not atomic in `index_archive.py` (Critical)
+
+**Problem**: `_save_manifest()` used `MANIFEST_PATH.write_text()` directly. A crash mid-write (OOM kill, Ctrl-C) would truncate or corrupt the manifest, causing a full re-index on the next run. `embed.py` already used the correct atomic pattern; `index_archive.py` did not.
+
+**Fix**: Write to `.tmp` file first, then `tmp.replace(MANIFEST_PATH)` — atomic rename. Mirrors `embed.py:55-63`.
+
+---
+
+### HB-3 — Concurrent manifest access has no file lock (High)
+
+**Problem**: Both `embed.py` and `index_archive.py` load/mutate/save their manifests with no inter-process locking. Two simultaneous runs of the same indexer can silently drop entries (last writer wins).
+
+**Fix**: Added `FileLock` (from `filelock`) around manifest read/write in `embed.py`. `index_archive.py` is protected by the lock file (HB-1), which prevents concurrent runs.
+
+---
+
+### HB-4 — Lock file had no PID, stale lock undetectable (Critical)
+
+**Problem**: `_is_indexer_running()` in `brain_tui.py` only checked `_LOCK_FILE.exists()`. An empty or stale lock file after a crash permanently blocked the indexer. No way to distinguish a live process from a ghost.
+
+**Fix**: Lock file now contains `{"pid": ..., "started": ..., "heartbeat": ...}`. `_is_indexer_running()` reads the PID and validates it with `os.kill(pid, 0)`. Stale/corrupt lock files are deleted automatically.
+
+---
+
+### HL-1 — File reads had no encoding fallback (High)
+
+**Problem**: `open(file_path, "r", encoding="utf-8")` in `_index_single_file()` would raise `UnicodeDecodeError` on Latin-1, Windows-1252, or otherwise mis-encoded files. Those files were written to `failures.json` and never retried — silently excluded from the knowledge graph permanently.
+
+**Fix**: Added `errors="replace"` — mis-encoded characters become `?` replacement chars, file still indexes.
+
+---
+
+### HL-2 — `visualize_sigma.py` had hardcoded relative GRAPHML path (High)
+
+**Problem**: `GRAPHML_PATH = Path("knowledge_base") / ".lightrag" / "..."` — relative path only works when running from the project root. Crashes from any other directory. `visualize_graph.py` correctly imported `WORKING_DIR` from `config`; `visualize_sigma.py` did not.
+
+**Fix**: `from config import WORKING_DIR` + `WORKING_DIR / "graph_chunk_entity_relation.graphml"`. `OUTPUT_PATH` and `DATA_JSON_PATH` use `Path(__file__).parent` to anchor to the project root.
+
+---
+
+### HL-3 — Ollama `AsyncClient` never closed (High)
+
+**Problem**: `_local_embed()` created `ollama.AsyncClient()` per call but never closed it. Under exceptions, HTTP connections leaked. On high-volume sessions this could exhaust file descriptors.
+
+**Fix**: Added `finally: await client._client.aclose()` — best-effort cleanup via the underlying `httpx.AsyncClient`.
+
+---
+
+### MB-1 — JavaScript `searchInput` used before declaration (Medium)
+
+**Problem**: In `sigma_hud.py`, the `keydown` handler at line ~624 referenced `searchInput` (a `const` declared at line ~631). TDZ (Temporal Dead Zone) in ES6 makes this a `ReferenceError` at runtime. The live-mode toggle shortcut `l` silently broke.
+
+**Fix**: Replaced `searchInput` with `document.getElementById("search-input")` inline in the handler.
+
+---
+
+### MB-2 — `prune_graph.py` backup overwrite fails on Windows (Medium)
+
+**Problem**: `GRAPH_PATH.replace(backup_path)` used a fixed name (`graph_chunk_entity_relation.graphml.bak`). On Windows, the second run of the pruner always crashed because `backup_path` already existed from the first run.
+
+**Fix**: Backup filename now includes a timestamp: `{stem}_{YYYYMMDD_HHMMSS}.graphml.bak`.
+
+---
+
+### MB-3 — FTS5 rebuild not verified after migration (Medium)
+
+**Problem**: After schema migration, `embed.py` issued the FTS5 rebuild command but never checked if it succeeded. A corrupted FTS5 index would silently fail and full-text search would return 0 results.
+
+**Fix**: After rebuild, check `SELECT COUNT(*) FROM chunks_fts` against `SELECT COUNT(*) FROM chunks`. Warn to stderr on mismatch.
+
+---
+
+### MB-4 — `watch()` in `visualize_graph.py` rendered without checking file existence (Medium)
+
+**Problem**: First iteration of the watch loop called `render()` unconditionally. On a fresh repo before any indexing, this crashed with a confusing traceback instead of a clear message.
+
+**Fix**: Guard with `if GRAPHML_PATH.exists():` before the initial render. Prints "Graph file not found yet — waiting for indexer..." otherwise.
+
+---
+
+### MB-5 — `--top` and `--poll` CLI args accepted zero and negative values (Medium)
+
+**Problem**: `argparse` accepted `--top 0`, `--top -5`, `--poll -1` without validation. Zero or negative values caused silent logic errors (empty filtering, `time.sleep(-1)` exception).
+
+**Fix**: Added `_positive_int()` validator: raises `argparse.ArgumentTypeError` for values < 1.
+
+---
+
+### HL-3 (schema) — Orphan vectors in `vec_chunks` (High)
+
+**Problem**: `vec_chunks` is a `vec0` virtual table that does not support `FOREIGN KEY`. Deleting from `chunks` without deleting the corresponding `vec_chunks` row left orphan vectors that polluted similarity search results.
+
+**Fix**: Every `DELETE FROM chunks WHERE path = ?` is now preceded by `DELETE FROM vec_chunks WHERE rowid IN (SELECT id FROM chunks WHERE path = ?)`.
+
+---
+
+### Audit: graph_hud.py tooltip — NOT a bug
+
+Audit initially flagged `.innerHTML` tooltip injection as an XSS vector. On detailed review, the code already used `.textContent` for both tooltip fields. No change needed.
+
+---
+
+## OpenBLAS Startup Hang — 2026-05-17
+
+**Symptom**: Indexer hangs indefinitely at:
+```
+INFO | Loading LightRAG SDK (first call only, may take a few seconds)...
+```
+No subsequent log output. Process must be killed manually after 60+ seconds. Reproducible on every cold start.
+
+**Root cause**: `lightrag.utils` imports `numpy` at module level. NumPy 2.4.x bundles `scipy-openblas 0.3.31` built with `MAX_THREADS=24`. At import time, OpenBLAS calls `goto_get_num_procs()` (= logical CPU count) and tries to allocate per-thread workspace for every core. With ~3 GB free RAM on this 16 GB system (other processes consuming ~13 GB), the `mmap` workspace allocation fails. OpenBLAS retries 10 times with a ~6-second sleep between each:
+```
+OpenBLAS error: Memory allocation still failed after 10 retries, giving up.
+```
+10 × 6s = the observed 60-second hang before crash. Not a Python 3.14 regression specifically — but NumPy 2.4.x (required by Python 3.14) is the first generation bundling this OpenBLAS build with these defaults.
+
+**Why `OPENBLAS_NUM_THREADS=1` fixes it**: With 1 thread, OpenBLAS skips the per-core pool allocation entirely. Memory usage drops to one thread's workspace. **Performance impact: zero for this codebase** — all heavy compute (embeddings, LLM inference) runs in Ollama on GPU. NumPy only wraps Ollama's returned float arrays into `np.ndarray`. Single-thread BLAS for small vector ops (≤4096 dims) is actually *faster* than multi-thread due to no fork/join overhead.
+
+**Three-layer fix (defense in depth)**:
+
+**Layer 1 — `sitecustomize.py` in the venv** (strongest: fires before any user code, any import, any entry point):
+```
+.venv\Lib\site-packages\sitecustomize.py
+```
+Python's `site.py` runs `sitecustomize` during interpreter startup before user code. Cannot be bypassed by import order. Covers all current and future entry points.
+
+**Layer 2 — Windows user-level env vars** (survives reboots, covers all Python on this user account):
+```powershell
+setx OPENBLAS_NUM_THREADS 1
+setx OMP_NUM_THREADS 1
+setx OPENBLAS_MAIN_FREE 1
+setx MKL_NUM_THREADS 1
+```
+
+**Layer 3 — `config.py` + `.env`** (belt-and-suspenders, already in place from emergency fix):
+```python
+# config.py — after load_dotenv()
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("OPENBLAS_MAIN_FREE", "1")
+```
+```
+# .env
+OPENBLAS_NUM_THREADS=1
+OMP_NUM_THREADS=1
+OPENBLAS_MAIN_FREE=1
+```
+
+**Measured result**: `import lightrag.utils` went from 60-second hang → **0.67s** after fix. Full `index_archive.py --dry-run` (26 files, 6098-node graph): **4.4s total**.
+
+**⚠️ Venv rebuild caveat**: `sitecustomize.py` lives in `.venv/Lib/site-packages/` and is deleted by `uv venv --clear` or `rm -rf .venv`. If you rebuild the venv, recreate this file. Layers 2 and 3 persist independently.
 
 ---
 

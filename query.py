@@ -21,7 +21,46 @@ from config import EMBED_MODEL
 PROJECT_ROOT = Path(__file__).parent
 DB_PATH = PROJECT_ROOT / "data" / "index.db"
 TOPK = 10
-CANDIDATE_K = 10  # over-retrieve before RRF, then trim to TOPK
+CANDIDATE_K = 50  # over-retrieve before RRF, then trim to TOPK (C4)
+
+# C6: relevance floor. Off-topic queries otherwise return junk chunks. Calibrated at
+# CANDIDATE_K=50: negatives top out at RRF ~0.03078, positives floor at ~0.03132 —
+# floor centred between them. NOTE: RRF scores cluster tightly (they encode rank
+# agreement, not similarity), so this margin is small; a raw vector-distance floor
+# would be more robust if the corpus grows. ponytail: revisit if negatives leak.
+MIN_RRF_SCORE = 0.0310
+
+_drift_checked = False
+
+
+def _warn_on_model_drift(conn: sqlite3.Connection) -> None:
+    """Warn once if the live embed model digest differs from the one indexed with.
+
+    Query vectors are embedded fresh; if the model changed under the same tag, the
+    stored vectors are in a different space and recall silently collapses (B4).
+    """
+    global _drift_checked
+    if _drift_checked:
+        return
+    _drift_checked = True
+    try:
+        row = conn.execute("SELECT value FROM index_meta WHERE key = 'embed_model_digest'").fetchone()
+    except sqlite3.OperationalError:
+        return  # pre-B4 index without index_meta — nothing to compare
+    indexed_digest = row[0] if row else ""
+    if not indexed_digest:
+        return
+    from embed import model_digest
+
+    live = model_digest()
+    if live and live != indexed_digest:
+        # ASCII only — this may print to a non-UTF-8 console (e.g. Windows cp874).
+        print(
+            f"WARNING: embed model '{EMBED_MODEL}' digest changed since indexing "
+            f"({indexed_digest[:12]}... -> {live[:12]}...). Stored vectors are stale - "
+            f"re-run `python embed.py --reset` to restore recall.",
+            file=sys.stderr,
+        )
 
 
 # ──────────────────────────────────────────────
@@ -74,10 +113,29 @@ def vector_search(conn: sqlite3.Connection, query_emb: bytes, k: int = TOPK) -> 
 # ──────────────────────────────────────────────
 # BM25 SEARCH (via FTS5 — O(log n) SQL query)
 # ──────────────────────────────────────────────
+# Common query words that carry no retrieval signal. Quoting + AND-ing these (the
+# old behavior) meant a doc had to contain EVERY word, so verbose questions matched
+# nothing — BM25 was dead on 19/20 eval queries (C5).
+_STOPWORDS = {
+    "a", "an", "the", "and", "or", "of", "to", "for", "in", "on", "at", "by", "from",
+    "with", "as", "is", "are", "was", "were", "be", "been", "being", "do", "does",
+    "did", "what", "how", "why", "when", "where", "which", "who", "whom", "whose",
+    "this", "that", "these", "those", "i", "you", "it", "its", "we", "they", "he",
+    "she", "can", "could", "should", "would", "will", "shall", "may", "might", "must",
+    "about", "into", "over", "than", "then", "so", "if", "but", "not", "no", "yes",
+}
+
+
 def _fts5_query(text: str) -> str:
-    """Sanitize text for FTS5 MATCH. Wraps each word token in quotes."""
-    tokens = re.findall(r"\w+", text)
-    return " ".join(f'"{t}"' for t in tokens if t)
+    """Build an FTS5 MATCH expression with OR semantics over significant tokens.
+
+    Drops stopwords (keeping rare/specific terms) and OR-joins the rest so any
+    matching term contributes — restoring BM25's rare-term/acronym path. Falls back
+    to OR over all tokens when the query is entirely stopwords.
+    """
+    tokens = re.findall(r"\w+", text.lower())
+    significant = [t for t in tokens if t not in _STOPWORDS] or tokens
+    return " OR ".join(f'"{t}"' for t in significant)
 
 
 def bm25_search(conn: sqlite3.Connection, query: str, k: int = TOPK) -> dict[int, float]:
@@ -127,15 +185,20 @@ def reciprocal_rank_fusion(
 def search(query: str, k: int = TOPK) -> list[dict]:
     conn = open_db()
     try:
+        _warn_on_model_drift(conn)
         query_emb = get_query_embedding(query)
         vector_scores = vector_search(conn, query_emb, k=CANDIDATE_K)
         bm25_scores = bm25_search(conn, query, k=CANDIDATE_K)
         fused = reciprocal_rank_fusion(vector_scores, bm25_scores, k=k)
 
+        # C6: no result clears the relevance floor → "no relevant results".
+        if not fused or fused[0][1] < MIN_RRF_SCORE:
+            return []
+
         results = []
         for docid, rrf_score in fused:
             row = conn.execute(
-                "SELECT path, chunk_index, content FROM chunks WHERE id = ?",
+                "SELECT path, chunk_index, content, title, section FROM chunks WHERE id = ?",
                 (docid,),
             ).fetchone()
             if row:
@@ -144,6 +207,8 @@ def search(query: str, k: int = TOPK) -> list[dict]:
                         "path": row[0],
                         "chunk_index": row[1],
                         "content": row[2],
+                        "title": row[3],
+                        "section": row[4],
                         "rrf_score": rrf_score,
                     }
                 )
